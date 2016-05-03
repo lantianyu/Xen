@@ -322,6 +322,7 @@ struct acpi_20_waet {
 #define ACPI_IO_SAPIC                       0x06
 #define ACPI_PROCESSOR_LOCAL_SAPIC          0x07
 #define ACPI_PLATFORM_INTERRUPT_SOURCES     0x08
+#define ACPI_PROCESSOR_LOCAL_X2APIC         0x09
 
 /*
  * APIC Structure Definitions.
@@ -336,6 +337,15 @@ struct acpi_20_madt_lapic {
     uint8_t  acpi_processor_id;
     uint8_t  apic_id;
     uint32_t flags;
+};
+
+struct acpi_20_madt_x2apic {
+    uint8_t  type;
+    uint8_t  length;
+    uint16_t reserved;		    /* reserved - must be zero */
+    uint32_t apic_id;           /* Processor x2APIC ID  */
+    uint32_t flags;
+    uint32_t acpi_processor_id;	/* ACPI processor UID */
 };
 
 /*

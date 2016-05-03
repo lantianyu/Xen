@@ -82,9 +82,9 @@ static struct acpi_20_madt *construct_madt(struct acpi_ctxt *ctxt,
     struct acpi_20_madt           *madt;
     struct acpi_20_madt_intsrcovr *intsrcovr;
     struct acpi_20_madt_ioapic    *io_apic;
-    struct acpi_20_madt_lapic     *lapic;
     const struct hvm_info_table   *hvminfo = config->hvminfo;
     int i, sz;
+    void *end;
 
     if ( config->lapic_id == NULL )
         return NULL;
@@ -92,7 +92,11 @@ static struct acpi_20_madt *construct_madt(struct acpi_ctxt *ctxt,
     sz  = sizeof(struct acpi_20_madt);
     sz += sizeof(struct acpi_20_madt_intsrcovr) * 16;
     sz += sizeof(struct acpi_20_madt_ioapic);
-    sz += sizeof(struct acpi_20_madt_lapic) * hvminfo->nr_vcpus;
+
+    if (hvminfo->nr_vcpus < 256)
+        sz += sizeof(struct acpi_20_madt_lapic) * hvminfo->nr_vcpus;
+    else
+        sz += sizeof(struct acpi_20_madt_x2apic) * hvminfo->nr_vcpus;
 
     madt = ctxt->mem_ops.alloc(ctxt, sz, 16);
     if (!madt) return NULL;
@@ -146,27 +150,47 @@ static struct acpi_20_madt *construct_madt(struct acpi_ctxt *ctxt,
         io_apic->ioapic_id   = config->ioapic_id;
         io_apic->ioapic_addr = config->ioapic_base_address;
 
-        lapic = (struct acpi_20_madt_lapic *)(io_apic + 1);
+        end = (struct acpi_20_madt_lapic *)(io_apic + 1);
     }
     else
-        lapic = (struct acpi_20_madt_lapic *)(madt + 1);
+        end = (struct acpi_20_madt_lapic *)(madt + 1);
 
-    info->nr_cpus = hvminfo->nr_vcpus;
-    info->madt_lapic0_addr = ctxt->mem_ops.v2p(ctxt, lapic);
-    for ( i = 0; i < hvminfo->nr_vcpus; i++ )
-    {
-        memset(lapic, 0, sizeof(*lapic));
-        lapic->type    = ACPI_PROCESSOR_LOCAL_APIC;
-        lapic->length  = sizeof(*lapic);
-        /* Processor ID must match processor-object IDs in the DSDT. */
-        lapic->acpi_processor_id = i;
-        lapic->apic_id = config->lapic_id(i);
-        lapic->flags = (test_bit(i, hvminfo->vcpu_online)
-                        ? ACPI_LOCAL_APIC_ENABLED : 0);
-        lapic++;
+    if (hvminfo->nr_vcpus < 256) {
+        struct acpi_20_madt_lapic *lapic = (struct acpi_20_madt_lapic *)end;
+        info->madt_lapic0_addr = ctxt->mem_ops.v2p(ctxt, lapic);
+        for ( i = 0; i < hvminfo->nr_vcpus; i++ )
+        {
+            memset(lapic, 0, sizeof(*lapic));
+            lapic->type    = ACPI_PROCESSOR_LOCAL_APIC;
+            lapic->length  = sizeof(*lapic);
+            /* Processor ID must match processor-object IDs in the DSDT. */
+            lapic->acpi_processor_id = i;
+            lapic->apic_id = config->lapic_id(i);
+            lapic->flags = ((i < hvminfo->nr_vcpus) &&
+                            test_bit(i, hvminfo->vcpu_online)
+                            ? ACPI_LOCAL_APIC_ENABLED : 0);
+            lapic++;
+        }
+        end = lapic;
+    } else {
+        struct acpi_20_madt_x2apic *lapic = (struct acpi_20_madt_x2apic *)end;
+        info->madt_lapic0_addr = ctxt->mem_ops.v2p(ctxt, lapic);
+        for ( i = 0; i < hvminfo->nr_vcpus; i++ )
+        {
+            memset(lapic, 0, sizeof(*lapic));
+            lapic->type    = ACPI_PROCESSOR_LOCAL_X2APIC;
+            lapic->length  = sizeof(*lapic);
+            /* Processor ID must match processor-object IDs in the DSDT. */
+            lapic->acpi_processor_id = i;
+            lapic->apic_id = config->lapic_id(i);
+            lapic->flags =  test_bit(i, hvminfo->vcpu_online)
+                            ? ACPI_LOCAL_APIC_ENABLED : 0;
+            lapic++;
+        }
+        end = lapic;
     }
 
-    madt->header.length = (unsigned char *)lapic - (unsigned char *)madt;
+    madt->header.length = (unsigned char *)end - (unsigned char *)madt;
     set_checksum(madt, offsetof(struct acpi_header, checksum),
                  madt->header.length);
     info->madt_csum_addr =
