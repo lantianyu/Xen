@@ -476,7 +476,7 @@ int hap_enable(struct domain *d, u32 mode)
     if ( old_pages == 0 )
     {
         paging_lock(d);
-        rv = hap_set_allocation(d, 256, NULL);
+        rv = hap_set_allocation(d, 512, NULL);
         if ( rv != 0 )
         {
             hap_set_allocation(d, 0, NULL);
