@@ -210,7 +210,7 @@ int libxl__domain_build_info_setdefault(libxl__gc *gc,
             b_info->iomem[i].gfn = b_info->iomem[i].start;
 
     if (!b_info->event_channels)
-        b_info->event_channels = 1023;
+        b_info->event_channels = 4095;
 
     libxl__arch_domain_build_info_acpi_setdefault(b_info);
 
