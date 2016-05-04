@@ -32,7 +32,7 @@
 #define HVM_INFO_PADDR       ((HVM_INFO_PFN << 12) + HVM_INFO_OFFSET)
 
 /* Maximum we can support with current vLAPIC ID mapping. */
-#define HVM_MAX_VCPUS        255
+#define HVM_MAX_VCPUS        288
 
 /*
  * In some cases SMP HVM guests may require knowledge of Xen's idea of vCPU ids
