@@ -51,6 +51,8 @@ struct hvm_ioreq_vcpu {
 #define NR_IO_RANGE_TYPES (XEN_DMOP_IO_RANGE_PCI + 1)
 #define MAX_NR_IO_RANGES  256
 
+#define IOREQ_PAGE_NUM    2
+
 struct hvm_ioreq_server {
     struct list_head       list_entry;
     struct domain          *domain;
@@ -61,7 +63,7 @@ struct hvm_ioreq_server {
     /* Domain id of emulating domain */
     domid_t                domid;
     ioservid_t             id;
-    struct hvm_ioreq_page  ioreq;
+    struct hvm_ioreq_page  ioreq[IOREQ_PAGE_NUM];
     struct list_head       ioreq_vcpu_list;
     struct hvm_ioreq_page  bufioreq;
 
