@@ -51,7 +51,7 @@
 #define X86_CR0_PE 0x01
 #define X86_CR0_ET 0x10
 
-#define IOREQ_PAGE_NUM 2
+#define IOREQ_PAGE_NUM 4
 
 #define SPECIALPAGE_PAGING   0
 #define SPECIALPAGE_ACCESS   1

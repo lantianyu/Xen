@@ -51,7 +51,7 @@ struct hvm_ioreq_vcpu {
 #define NR_IO_RANGE_TYPES (XEN_DMOP_IO_RANGE_PCI + 1)
 #define MAX_NR_IO_RANGES  256
 
-#define IOREQ_PAGE_NUM    2
+#define IOREQ_PAGE_NUM    4
 
 struct hvm_ioreq_server {
     struct list_head       list_entry;
