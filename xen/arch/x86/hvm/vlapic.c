@@ -980,7 +980,7 @@ static void set_x2apic_id(struct vlapic *vlapic)
     u32 id = vlapic_vcpu(vlapic)->vcpu_id;
     u32 ldr = ((id & ~0xf) << 12) | (1 << (id & 0xf));
 
-    vlapic_set_reg(vlapic, APIC_ID, id * 2);
+    vlapic_set_reg(vlapic, APIC_ID, id);
     vlapic_set_reg(vlapic, APIC_LDR, ldr);
 }
 
@@ -1246,7 +1246,7 @@ void vlapic_reset(struct vlapic *vlapic)
     if ( !has_vlapic(v->domain) )
         return;
 
-    vlapic_set_reg(vlapic, APIC_ID,  (v->vcpu_id * 2) << 24);
+    vlapic_set_reg(vlapic, APIC_ID,  v->vcpu_id << 24);
     vlapic_set_reg(vlapic, APIC_LVR, VLAPIC_VERSION);
 
     for ( i = 0; i < 8; i++ )
@@ -1362,7 +1362,7 @@ static void lapic_load_fixup(struct vlapic *vlapic)
          * here, but can be dropped as soon as it is found to conflict with
          * other (future) changes.
          */
-        if ( GET_xAPIC_ID(id) != vlapic_vcpu(vlapic)->vcpu_id * 2 ||
+        if ( GET_xAPIC_ID(id) != vlapic_vcpu(vlapic)->vcpu_id ||
              id != SET_xAPIC_ID(GET_xAPIC_ID(id)) )
             printk(XENLOG_G_WARNING "%pv: bogus APIC ID %#x loaded\n",
                    vlapic_vcpu(vlapic), id);

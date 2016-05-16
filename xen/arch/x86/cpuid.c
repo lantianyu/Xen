@@ -697,10 +697,9 @@ void guest_cpuid(const struct vcpu *v, uint32_t leaf,
         const struct cpu_user_regs *regs;
 
     case 0x1:
-        /* TODO: Rework topology logic. */
         res->b &= 0x00ffffffu;
         if ( is_hvm_domain(d) )
-            res->b |= (v->vcpu_id * 2) << 24;
+            res->b |= v->vcpu_id << 24;
 
         /* TODO: Rework vPMU control in terms of toolstack choices. */
         if ( vpmu_available(v) &&
@@ -878,8 +877,7 @@ void guest_cpuid(const struct vcpu *v, uint32_t leaf,
         {
             *(uint8_t *)&res->c = subleaf;
 
-            /* Fix the x2APIC identifier. */
-            res->d = v->vcpu_id * 2;
+            res->d = v->vcpu_id;
         }
         break;
 

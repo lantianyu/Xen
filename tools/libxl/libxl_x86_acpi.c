@@ -86,7 +86,7 @@ static void acpi_mem_free(struct acpi_ctxt *ctxt,
 
 static uint8_t acpi_lapic_id(unsigned cpu)
 {
-    return cpu * 2;
+    return cpu;
 }
 
 static int init_acpi_config(libxl__gc *gc, 
