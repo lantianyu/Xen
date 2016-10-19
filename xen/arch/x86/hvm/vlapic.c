@@ -265,6 +265,7 @@ static void vlapic_init_sipi_one(struct vcpu *target, uint32_t icr)
     {
     case APIC_DM_INIT: {
         bool_t fpu_initialised;
+        bool_t is_x2apic_mode;
         int rc;
 
         /* No work on INIT de-assert for P4-type APIC. */
@@ -281,7 +282,16 @@ static void vlapic_init_sipi_one(struct vcpu *target, uint32_t icr)
         rc = vcpu_reset(target);
         ASSERT(!rc);
         target->fpu_initialised = fpu_initialised;
+        is_x2apic_mode = !!vlapic_x2apic_mode(vcpu_vlapic(target));
         vlapic_reset(vcpu_vlapic(target));
+        /*
+         * An INIT keeps the x2APIC in the x2APIC mode.
+         * The state of the local APIC ID register is preserved.
+         */
+        if ( is_x2apic_mode )
+            vlapic_msr_set(vcpu_vlapic(target),
+                    vcpu_vlapic(target)->hw.apic_base_msr
+                    | MSR_IA32_APICBASE_EXTD);
         domain_unlock(target->domain);
         break;
     }
