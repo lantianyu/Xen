@@ -105,6 +105,12 @@
 #define     APIC_TDR_DIV_64          0x9
 #define     APIC_TDR_DIV_128         0xA
 
+#define MSR_IA32_APICBASE            0x0000001b
+#define MSR_IA32_APICBASE_ENABLE     (1 << 11)
+#define MSR_IA32_APICBASE_BASE       (0xfffff << 12)
+
+#define APIC_BASE_MSR                0x800
+#define X2APIC_ENABLE                (1UL << 10)
 #endif
 
 /*

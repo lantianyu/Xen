@@ -27,6 +27,8 @@
 extern char ap_boot_start[], ap_boot_end[];
 
 static int ap_callin, ap_cpuid;
+static int ap_should_enable_x2apic;
+static bool lock = 1;
 
 asm (
     "    .text                       \n"
@@ -47,7 +49,15 @@ asm (
     "    mov   %eax,%ds              \n"
     "    mov   %eax,%es              \n"
     "    mov   %eax,%ss              \n"
-    "    movl  $stack_top,%esp       \n"
+    "3:  movb  $1, %bl               \n"
+    "    mov   $lock,%edx            \n"
+    "    movzbl %bl,%eax             \n"
+    "    xchg  %al, (%edx)           \n"
+    "    test  %al,%al               \n"
+    "    je    2f                    \n"
+    "    pause                       \n"
+    "    jmp   3b                    \n"
+    "2:  movl  $stack_top,%esp       \n"
     "    movl  %esp,%ebp             \n"
     "    call  ap_start              \n"
     "1:  hlt                         \n"
@@ -71,11 +81,20 @@ asm (
 void ap_start(void); /* non-static avoids unused-function compiler warning */
 /*static*/ void ap_start(void)
 {
-    printf(" - CPU%d ... ", ap_cpuid);
+    uint64_t msr;
+
+    /* FIXME: ap_cpuid should be discarded */
     cacheattr_init();
-    printf("done.\n");
+    ap_callin++;
     wmb();
-    ap_callin = 1;
+
+    if ( ap_should_enable_x2apic )
+    {
+        msr = rdmsr(MSR_IA32_APICBASE);
+        wrmsr(MSR_IA32_APICBASE, msr | X2APIC_ENABLE);
+    }
+
+    test_and_clear_bool(lock);
 }
 
 static void lapic_wait_ready(void)
@@ -118,6 +137,22 @@ static void boot_cpu(unsigned int cpu)
     lapic_wait_ready();    
 }
 
+void x2apic_boot_cpu(unsigned int nr_cpus)
+{
+    /* Initialise shared variables. */
+    ap_callin = 0;
+    wmb();
+
+    wrmsr(APIC_BASE_MSR + (APIC_ICR >> 4), APIC_DEST_ALLBUT | APIC_DM_INIT);
+
+    wrmsr(APIC_BASE_MSR + (APIC_ICR >> 4), APIC_DEST_ALLBUT | APIC_DM_STARTUP | (AP_BOOT_EIP >> 12));
+
+    while ( ap_callin != nr_cpus - 1 )
+        cpu_relax();
+
+    wrmsr(APIC_BASE_MSR + (APIC_ICR >> 4), APIC_DEST_ALLBUT | APIC_DM_INIT);
+}
+
 void smp_initialise(void)
 {
     unsigned int i, nr_cpus = hvm_info->nr_vcpus;
@@ -125,9 +160,15 @@ void smp_initialise(void)
     memcpy((void *)AP_BOOT_EIP, ap_boot_start, ap_boot_end - ap_boot_start);
 
     printf("Multiprocessor initialisation:\n");
+    if ( nr_cpus > 255 )
+        ap_should_enable_x2apic = 1;
+
     ap_start();
-    for ( i = 1; i < nr_cpus; i++ )
-        boot_cpu(i);
+    if ( nr_cpus > 255 )
+        x2apic_boot_cpu(nr_cpus);
+    else
+        for ( i = 1; i < nr_cpus; i++ )
+            boot_cpu(i);
 }
 
 /*

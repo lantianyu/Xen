@@ -154,6 +154,23 @@ static inline void cpu_relax(void)
     __mod;                                                      \
 })
 
+/* atomic operations */
+struct __xchg_dummy { unsigned long a[100]; };
+#define __xg(x) ((volatile struct __xchg_dummy *)(x))
+
+#define xchg(ptr, v) ({                         \
+    uint8_t x;                                  \
+    x = (v);                                    \
+    asm volatile ( "xchgb %b0,%1"               \
+                   : "=q" (x)                   \
+                   : "m" (*__xg(ptr)), "0" (x)  \
+                   : "memory" );                \
+    x;                                          \
+})
+
+#define test_and_set_bool(b)   xchg(&(b), true)
+#define test_and_clear_bool(b) xchg(&(b), false)
+
 /* HVM-builder info. */
 struct hvm_info_table *get_hvm_info_table(void) __attribute__ ((const));
 #define hvm_info (get_hvm_info_table())
