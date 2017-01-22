@@ -62,6 +62,22 @@ struct vvtd {
     /* Max remapping entries in IRT */
     int irt_max_entry;
 
+    /*
+     * As IRTEs exist in guest memory, hypervisor needs to map/unmap guest
+     * memory which contains IRTE when hypervisor censors and relays guest
+     * interrupts.
+     *
+     * To pervent map/unmap guest pages frenquently, vIOMMU use irt_mapping to
+     * preserve the virtual address of the page. irt_mapping will filled when
+     * one irte in this page is using to deliver interrupt and be cleared when
+     * guest invalidates one irte in this page. If two irte in same page are
+     * in use firstly and concourrently, we may map the guest page twice. The
+     * lock prevents this case.
+     */
+    spinlock_t irt_mapping_lock;
+    void* (*irt_mapping)[IREMAP_ARCH_PAGE_NR]; /* Mapping irt page index to va */
+    struct page_info *irt_mapping_page;
+
     struct hvm_hw_vvtd_regs *regs;
     struct page_info *regs_page;
 };
@@ -188,6 +204,45 @@ static void unmap_guest_page(void *virt)
     put_page_and_type(page);
 }
 
+void vvtd_irt_mapping_destroy(struct vvtd *vvtd)
+{
+    int i;
+    ASSERT(vvtd->irt_mapping);
+    spin_lock(&vvtd->irt_mapping_lock);
+    for (i = 0; i < IREMAP_ARCH_PAGE_ORDER; i++)
+    {
+        if ( (*vvtd->irt_mapping)[i] )
+        {
+            unmap_guest_page((*vvtd->irt_mapping)[i]);
+            (*vvtd->irt_mapping)[i] = 0;
+        }
+    }
+    spin_unlock(&vvtd->irt_mapping_lock);
+}
+
+struct iremap_entry *get_irt_page(struct vvtd *vvtd, int n)
+{
+    int fail;
+    struct iremap_entry *irt_page;
+
+    ASSERT(vvtd->irt_mapping);
+    irt_page = (*vvtd->irt_mapping)[n];
+    if ( !irt_page )
+    {
+        spin_lock(&vvtd->irt_mapping_lock);
+        irt_page = (*vvtd->irt_mapping)[n];
+        if ( !irt_page )
+        {
+            fail = map_guest_page(vvtd->domain, vvtd->irt + n,
+                                  (void**)&irt_page);
+            if (!fail)
+                (*vvtd->irt_mapping)[n] = (void*)irt_page;
+        }
+        spin_unlock(&vvtd->irt_mapping_lock);
+    }
+    return irt_page;
+}
+
 static void vvtd_inj_irq(
     struct vlapic *target,
     uint8_t vector,
@@ -299,7 +354,6 @@ static void vvtd_report_non_recoverable_fault(struct vvtd *vvtd, int reason)
 {
     uint32_t fsts;
 
-    ASSERT(reason & DMA_FSTS_FAULTS);
     fsts = vvtd_get_reg(vvtd, DMAR_FSTS_REG);
     __vvtd_set_bit(vvtd, DMAR_FSTS_REG, reason);
 
@@ -711,6 +765,7 @@ static int vvtd_handle_gcmd_ire(struct vvtd *vvtd, unsigned long val)
         __vvtd_clear_bit(vvtd, DMAR_GSTS_REG, DMA_GSTS_IRES_BIT);
     }
 
+    vvtd_irt_mapping_destroy(vvtd);
     return X86EMUL_OKAY;
 }
 
@@ -978,9 +1033,8 @@ static int vvtd_get_entry(struct vvtd *vvtd,
         goto handle_fault;
     }
 
-    ret = map_guest_page(vvtd->domain, vvtd->irt + (entry >> IREMAP_ENTRY_ORDER),
-                         (void**)&irt_page);
-    if ( ret )
+    irt_page = get_irt_page(vvtd, entry >> IREMAP_ENTRY_ORDER);
+    if ( !irt_page )
     {
         ret = VTD_FR_IR_ROOT_INVAL;
         goto handle_fault;
@@ -991,7 +1045,7 @@ static int vvtd_get_entry(struct vvtd *vvtd,
     if ( !qinval_present(*irte) )
     {
         ret = VTD_FR_IR_ENTRY_P;
-        goto unmap_handle_fault;
+        goto handle_fault;
     }
 
     /* Check reserved bits */
@@ -999,7 +1053,7 @@ static int vvtd_get_entry(struct vvtd *vvtd,
           irte->remap.res_4) )
     {
         ret = VTD_FR_IR_IRTE_RSVD;
-        goto unmap_handle_fault;
+        goto handle_fault;
     }
 
     /* TODO:Intel64 platforms block compatibility format interrupt request */
@@ -1007,13 +1061,10 @@ static int vvtd_get_entry(struct vvtd *vvtd,
     if (!ir_sid_valid(irte, irq->source_id))
     {
         ret = VTD_FR_IR_SID_ERR;
-        goto unmap_handle_fault;
+        goto handle_fault;
     }
-    unmap_guest_page(irt_page);
     return 0;
 
-unmap_handle_fault:
-    unmap_guest_page(irt_page);
 handle_fault:
     if ( !log_fault )
         goto out;
@@ -1177,6 +1228,16 @@ static struct vvtd *__vvtd_create(struct domain *d,
         goto out2;
     clear_page(vvtd->regs);
 
+    ASSERT( IREMAP_ARCH_PAGE_ORDER * sizeof(void *) <= PAGE_SIZE );
+    vvtd->irt_mapping_page = alloc_domheap_page(d, MEMF_no_owner);
+    if ( vvtd->irt_mapping_page == NULL )
+        goto out3;
+
+    vvtd->irt_mapping=__map_domain_page_global(vvtd->irt_mapping_page);
+    if ( vvtd->irt_mapping == NULL )
+        goto out4;
+    clear_page(vvtd->irt_mapping);
+
     vvtd_reset(vvtd, cap);
     vvtd->base_addr = base_addr;
     vvtd->domain = d;
@@ -1185,9 +1246,14 @@ static struct vvtd *__vvtd_create(struct domain *d,
     vvtd->irt = 0;
     vvtd->irt_max_entry = 0;
     vvtd->frcd_idx = 0;
+    spin_lock_init(&vvtd->irt_mapping_lock);
     register_mmio_handler(d, &vvtd_mmio_ops);
     return vvtd;
 
+out4:
+    free_domheap_page(vvtd->irt_mapping_page);
+out3:
+    unmap_domain_page_global(vvtd->regs);
 out2:
     free_domheap_page(vvtd->regs_page);
 out1:
@@ -1199,6 +1265,9 @@ static void __vvtd_destroy(struct vvtd *vvtd)
 {
     unmap_domain_page_global(vvtd->regs);
     free_domheap_page(vvtd->regs_page);
+    vvtd_irt_mapping_destroy(vvtd);
+    unmap_domain_page_global(vvtd->irt_mapping);
+    free_domheap_page(vvtd->irt_mapping_page);
     xfree(vvtd);
 }
 
