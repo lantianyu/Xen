@@ -80,6 +80,7 @@ static int pt_irq_vector(struct periodic_time *pt, enum hvm_intsrc src)
     struct vcpu *v = pt->vcpu;
     struct hvm_vioapic *vioapic;
     unsigned int gsi, isa_irq, pin;
+    int vector;
 
     if ( pt->source == PTSRC_lapic )
         return pt->irq;
@@ -101,7 +102,15 @@ static int pt_irq_vector(struct periodic_time *pt, enum hvm_intsrc src)
         return -1;
     }
 
-    return vioapic->redirtbl[pin].fields.vector;
+    vector = vioapic_pin_vector(vioapic, pin);
+    if ( vector < 0 )
+    {
+        gdprintk(XENLOG_ERR, "Can't get interrupt vector from GSI (%u)\n",
+                 gsi);
+        domain_crash(v->domain);
+        return -1;
+    }
+    return vector;
 }
 
 static int pt_irq_masked(struct periodic_time *pt)

@@ -319,6 +319,27 @@ static inline int pit_channel0_enabled(void)
     return pt_active(&current->domain->arch.vpit.pt0);
 }
 
+int vioapic_pin_vector(struct hvm_vioapic *vioapic, unsigned int pin)
+{
+    struct IO_APIC_route_remap_entry rte = { { vioapic->redirtbl[pin].bits } };
+
+    if ( rte.format )
+    {
+        int err;
+        struct irq_remapping_request request;
+        struct irq_remapping_info info;
+
+        irq_request_ioapic_fill(&request, vioapic->id, rte.val);
+        /* Currently, only viommu 0 is supported */
+        err = viommu_get_irq_info(vioapic->domain, 0, &request, &info);
+        return !err ? info.vector : -1;
+    }
+    else
+    {
+        return vioapic->redirtbl[pin].fields.vector;
+    }
+}
+
 static void vioapic_deliver(struct hvm_vioapic *vioapic, unsigned int pin)
 {
     uint16_t dest = vioapic->redirtbl[pin].fields.dest_id;
