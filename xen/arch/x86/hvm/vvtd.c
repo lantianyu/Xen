@@ -19,6 +19,7 @@
  */
 
 #include <xen/domain_page.h>
+#include <xen/lib.h>
 #include <xen/sched.h>
 #include <xen/types.h>
 #include <xen/viommu.h>
@@ -30,6 +31,7 @@
 #include <asm/io_apic.h>
 #include <asm/page.h>
 #include <asm/p2m.h>
+#include <asm/system.h>
 #include <public/viommu.h>
 
 #include "../../../drivers/passthrough/vtd/iommu.h"
@@ -49,6 +51,8 @@ struct hvm_hw_vvtd_regs {
 struct vvtd {
     /* VIOMMU_STATUS_XXX_REMAPPING_ENABLED */
     int status;
+    /* Fault Recording index */
+    int frcd_idx;
     /* Address range of remapping hardware register-set */
     uint64_t base_addr;
     uint64_t length;
@@ -95,6 +99,23 @@ struct vvtd *domain_vvtd(struct domain *d)
 static inline struct vvtd *vcpu_vvtd(struct vcpu *v)
 {
     return domain_vvtd(v->domain);
+}
+
+static inline int vvtd_test_and_set_bit(struct vvtd *vvtd, uint32_t reg,
+                                        int nr)
+{
+    return test_and_set_bit(nr, (uint32_t *)&vvtd->regs->data[reg]);
+}
+
+static inline int vvtd_test_and_clear_bit(struct vvtd *vvtd, uint32_t reg,
+                                          int nr)
+{
+    return test_and_clear_bit(nr, (uint32_t *)&vvtd->regs->data[reg]);
+}
+
+static inline int vvtd_test_bit(struct vvtd *vvtd, uint32_t reg, int nr)
+{
+    return test_bit(nr, (uint32_t *)&vvtd->regs->data[reg]);
 }
 
 static inline void __vvtd_set_bit(struct vvtd *vvtd, uint32_t reg, int nr)
@@ -232,6 +253,24 @@ static int vvtd_delivery(
     return 0;
 }
 
+void vvtd_generate_interrupt(struct vvtd *vvtd,
+                             uint32_t addr,
+                             uint32_t data)
+{
+    uint8_t dest, dm, dlm, tm, vector;
+
+    VVTD_DEBUG(VVTD_DBG_FAULT, "Sending interrupt %x %x to d%d",
+               addr, data, vvtd->domain->domain_id);
+
+    dest = (addr & MSI_ADDR_DEST_ID_MASK) >> MSI_ADDR_DEST_ID_SHIFT;
+    dm = !!(addr & MSI_ADDR_DESTMODE_MASK);
+    dlm = (data & MSI_DATA_DELIVERY_MODE_MASK) >> MSI_DATA_DELIVERY_MODE_SHIFT;
+    tm = (data & MSI_DATA_TRIGGER_MASK) >> MSI_DATA_TRIGGER_SHIFT;
+    vector = data & MSI_DATA_VECTOR_MASK;
+
+    vvtd_delivery(vvtd->domain, vector, dest, dm, dlm, tm);
+}
+
 static uint32_t irq_remapping_request_index(struct irq_remapping_request *irq)
 {
     if ( irq->type == VIOMMU_REQUEST_IRQ_MSI )
@@ -260,11 +299,188 @@ static inline uint32_t irte_dest(struct vvtd *vvtd, uint32_t dest)
     return DMA_IRTA_EIME(irta) ? dest : MASK_EXTR(dest, IRTE_xAPIC_DEST_MASK);
 }
 
+static void vvtd_report_non_recoverable_fault(struct vvtd *vvtd, int reason)
+{
+    uint32_t fsts;
+
+    ASSERT(reason & DMA_FSTS_FAULTS);
+    fsts = vvtd_get_reg(vvtd, DMAR_FSTS_REG);
+    __vvtd_set_bit(vvtd, DMAR_FSTS_REG, reason);
+
+    /*
+     * Accoroding to VT-d spec "Non-Recoverable Fault Event" chapter, if
+     * there are any previously reported interrupt conditions that are yet to
+     * be sevices by software, the Fault Event interrrupt is not generated.
+     */
+    if ( fsts & DMA_FSTS_FAULTS )
+        return;
+
+    __vvtd_set_bit(vvtd, DMAR_FECTL_REG, DMA_FECTL_IP_BIT);
+    if ( !vvtd_test_bit(vvtd, DMAR_FECTL_REG, DMA_FECTL_IM_BIT) )
+    {
+        uint32_t fe_data, fe_addr;
+        fe_data = vvtd_get_reg(vvtd, DMAR_FEDATA_REG);
+        fe_addr = vvtd_get_reg(vvtd, DMAR_FEADDR_REG);
+        vvtd_generate_interrupt(vvtd, fe_addr, fe_data);
+        __vvtd_clear_bit(vvtd, DMAR_FECTL_REG, DMA_FECTL_IP_BIT);
+    }
+}
+
+static void vvtd_recomputing_ppf(struct vvtd *vvtd)
+{
+    int i;
+
+    for ( i = 0; i < DMAR_FRCD_REG_NR; i++ )
+    {
+        if ( vvtd_test_bit(vvtd, DMA_FRCD(i, DMA_FRCD3_OFFSET),
+                           DMA_FRCD_F_BIT) )
+        {
+            vvtd_report_non_recoverable_fault(vvtd, DMA_FSTS_PPF_BIT);
+            return;
+        }
+    }
+    /*
+     * No Primary Fault is in Fault Record Registers, thus clear PPF bit in
+     * FSTS.
+     */
+    __vvtd_clear_bit(vvtd, DMAR_FSTS_REG, DMA_FSTS_PPF_BIT);
+
+    /* If no fault is in FSTS, clear pending bit in FECTL. */
+    if ( !(vvtd_get_reg(vvtd, DMAR_FSTS_REG) & DMA_FSTS_FAULTS) )
+        __vvtd_clear_bit(vvtd, DMAR_FECTL_REG, DMA_FECTL_IP_BIT);
+}
+
+/*
+ * Commit a frcd to emulated Fault Record Registers.
+ */
+static void vvtd_commit_frcd(struct vvtd *vvtd, int idx,
+                             struct vtd_fault_record_register *frcd)
+{
+    vvtd_set_reg_quad(vvtd, DMA_FRCD(idx, DMA_FRCD0_OFFSET), frcd->bits.lo);
+    vvtd_set_reg_quad(vvtd, DMA_FRCD(idx, DMA_FRCD2_OFFSET), frcd->bits.hi);
+    vvtd_recomputing_ppf(vvtd);
+}
+
+/*
+ * Allocate a FRCD for the caller. If success, return the FRI. Or, return -1
+ * when failure.
+ */
+static int vvtd_alloc_frcd(struct vvtd *vvtd)
+{
+    int prev;
+    /* Set the F bit to indicate the FRCD is in use. */
+    if ( vvtd_test_and_set_bit(vvtd, DMA_FRCD(vvtd->frcd_idx, DMA_FRCD3_OFFSET),
+                               DMA_FRCD_F_BIT) )
+    {
+        prev = vvtd->frcd_idx;
+        vvtd->frcd_idx = (prev + 1) % DMAR_FRCD_REG_NR;
+        return vvtd->frcd_idx;
+    }
+    return -1;
+}
+
+static void vvtd_free_frcd(struct vvtd *vvtd, int i)
+{
+    __vvtd_clear_bit(vvtd, DMA_FRCD(i, DMA_FRCD3_OFFSET), DMA_FRCD_F_BIT);
+}
+
 static int vvtd_record_fault(struct vvtd *vvtd,
-                             struct irq_remapping_request *irq,
+                             struct irq_remapping_request *request,
                              int reason)
 {
-    return 0;
+    struct vtd_fault_record_register frcd;
+    int frcd_idx;
+
+    switch(reason)
+    {
+    case VTD_FR_IR_REQ_RSVD:
+    case VTD_FR_IR_INDEX_OVER:
+    case VTD_FR_IR_ENTRY_P:
+    case VTD_FR_IR_ROOT_INVAL:
+    case VTD_FR_IR_IRTE_RSVD:
+    case VTD_FR_IR_REQ_COMPAT:
+    case VTD_FR_IR_SID_ERR:
+        if ( vvtd_test_bit(vvtd, DMAR_FSTS_REG, DMA_FSTS_PFO_BIT) )
+            return X86EMUL_OKAY;
+
+        /* No available Fault Record means Fault overflowed */
+        frcd_idx = vvtd_alloc_frcd(vvtd);
+        if ( frcd_idx == -1 )
+        {
+            vvtd_report_non_recoverable_fault(vvtd, DMA_FSTS_PFO_BIT);
+            return X86EMUL_OKAY;
+        }
+        memset(&frcd, 0, sizeof(frcd));
+        frcd.fields.FR = (u8)reason;
+        frcd.fields.FI = ((u64)irq_remapping_request_index(request)) << 36;
+        frcd.fields.SID = (u16)request->source_id;
+        frcd.fields.F = 1;
+        vvtd_commit_frcd(vvtd, frcd_idx, &frcd);
+        return X86EMUL_OKAY;
+
+    default:
+        break;
+    }
+
+    gdprintk(XENLOG_ERR, "Can't handle vVTD Fault (reason 0x%x).", reason);
+    domain_crash(vvtd->domain);
+    return X86EMUL_OKAY;
+}
+
+static int vvtd_write_frcd3(struct vvtd *vvtd, uint32_t val)
+{
+    /* Writing a 1 means clear fault */
+    if ( val & DMA_FRCD_F )
+    {
+        vvtd_free_frcd(vvtd, 0);
+        vvtd_recomputing_ppf(vvtd);
+    }
+    return X86EMUL_OKAY;
+}
+
+static int vvtd_write_fectl(struct vvtd *vvtd, uint32_t val)
+{
+    /*
+     * Only DMA_FECTL_IM bit is writable. Generate pending event when unmask.
+     */
+    if ( !(val & DMA_FECTL_IM) )
+    {
+        /* Clear IM */
+        __vvtd_clear_bit(vvtd, DMAR_FECTL_REG, DMA_FECTL_IM_BIT);
+        if ( vvtd_test_and_clear_bit(vvtd, DMAR_FECTL_REG, DMA_FECTL_IP_BIT) )
+        {
+            uint32_t fe_data, fe_addr;
+            fe_data = vvtd_get_reg(vvtd, DMAR_FEDATA_REG);
+            fe_addr = vvtd_get_reg(vvtd, DMAR_FEADDR_REG);
+            vvtd_generate_interrupt(vvtd, fe_addr, fe_data);
+        }
+    }
+    else
+        __vvtd_set_bit(vvtd, DMAR_FECTL_REG, DMA_FECTL_IM_BIT);
+
+    return X86EMUL_OKAY;
+}
+
+static int vvtd_write_fsts(struct vvtd *vvtd, uint32_t val)
+{
+    int i, max_fault_index = DMA_FSTS_PRO_BIT;
+    uint64_t bits_to_clear = val & DMA_FSTS_RW1CS;
+
+    i = find_first_bit(&bits_to_clear, max_fault_index / 8 + 1);
+    while ( i <= max_fault_index )
+    {
+        __vvtd_clear_bit(vvtd, DMAR_FSTS_REG, i);
+        i = find_next_bit(&bits_to_clear, max_fault_index / 8 + 1, i + 1);
+    }
+
+    /*
+     * Clear IP field when all status fields in the Fault Status Register
+     * being clear.
+     */
+    if ( !((vvtd_get_reg(vvtd, DMAR_FSTS_REG) & DMA_FSTS_FAULTS)) )
+        __vvtd_clear_bit(vvtd, DMAR_FECTL_REG, DMA_FECTL_IP_BIT);
+
+    return X86EMUL_OKAY;
 }
 
 static int vvtd_handle_gcmd_qie(struct vvtd *vvtd, uint32_t val)
@@ -412,6 +628,18 @@ static int vvtd_write(struct vcpu *v, unsigned long addr,
             ret = vvtd_write_gcmd(vvtd, val);
             break;
 
+        case DMAR_FSTS_REG:
+            ret = vvtd_write_fsts(vvtd, val);
+            break;
+
+        case DMAR_FECTL_REG:
+            ret = vvtd_write_fectl(vvtd, val);
+            break;
+
+        case DMA_CAP_FRO_OFFSET + DMA_FRCD3_OFFSET:
+            ret = vvtd_write_frcd3(vvtd, val);
+            break;
+
         case DMAR_IEDATA_REG:
         case DMAR_IEADDR_REG:
         case DMAR_IEUADDR_REG:
@@ -436,6 +664,10 @@ static int vvtd_write(struct vcpu *v, unsigned long addr,
         case DMAR_IRTA_REG:
             vvtd_set_reg_quad(vvtd, DMAR_IRTA_REG, val);
             ret = X86EMUL_OKAY;
+            break;
+
+        case DMA_CAP_FRO_OFFSET + DMA_FRCD2_OFFSET:
+            ret = vvtd_write_frcd3(vvtd, val >> 32);
             break;
 
         default:
@@ -675,6 +907,7 @@ static int vvtd_create(struct domain *d, struct viommu *viommu)
     vvtd->eim = 0;
     vvtd->irt = 0;
     vvtd->irt_max_entry = 0;
+    vvtd->frcd_idx = 0;
     register_mmio_handler(d, &vvtd_mmio_ops);
     return 0;
 
