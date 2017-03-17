@@ -19,11 +19,13 @@
 
 #include "libxl_internal.h"
 #include "libxl_arch.h"
+#include "libacpi/libacpi.h"
 
 #include <xc_dom.h>
 #include <xen/hvm/hvm_info_table.h>
 #include <xen/hvm/hvm_xs_strings.h>
 #include <xen/hvm/e820.h>
+#include <xen/viommu.h>
 
 #include "_paths.h"
 
@@ -925,6 +927,43 @@ out:
     return rc;
 }
 
+static unsigned long acpi_v2p(struct acpi_ctxt *ctxt, void *v)
+{
+    return (unsigned long)v;
+}
+
+static void *acpi_mem_alloc(struct acpi_ctxt *ctxt,
+                            uint32_t size, uint32_t align)
+{
+    return aligned_alloc(align, size);
+}
+
+static void acpi_mem_free(struct acpi_ctxt *ctxt,
+                          void *v, uint32_t size)
+{
+    /* ACPI builder currently doesn't free memory so this is just a stub */
+}
+
+static int libxl__acpi_build_dmar(libxl__gc *gc,
+                                  struct acpi_config *config,
+                                  void **data_r, int *datalen_r)
+{
+    struct acpi_ctxt ctxt;
+    void *table;
+
+    ctxt.mem_ops.alloc = acpi_mem_alloc;
+    ctxt.mem_ops.free = acpi_mem_free;
+    ctxt.mem_ops.v2p = acpi_v2p;
+
+    table = construct_dmar(&ctxt, config);
+    if ( !table )
+        return ERROR_FAIL;
+
+    *data_r = table;
+    *datalen_r = acpi_get_table_size((struct acpi_header *)table);
+    return 0;
+}
+
 static int libxl__domain_firmware(libxl__gc *gc,
                                   libxl_domain_build_info *info,
                                   struct xc_dom_image *dom)
@@ -1042,6 +1081,54 @@ static int libxl__domain_firmware(libxl__gc *gc,
             /* Only accept a non-empty file */
             dom->acpi_modules[0].data = data;
             dom->acpi_modules[0].length = (uint32_t)datalen;
+        }
+    }
+
+    /* build DMAR table according guest configuration and joint it with other
+     * apci tables specified by acpi_modules */
+    if ((info->u.hvm.viommu.type == VIOMMU_TYPE_INTEL_VTD) &&
+        !libxl_defbool_is_default(info->u.hvm.viommu.intremap) &&
+        info->device_model_version == LIBXL_DEVICE_MODEL_VERSION_QEMU_XEN) {
+        struct acpi_config config;
+
+        memset(&config, 0, sizeof(config));
+        if (libxl_defbool_val(info->u.hvm.viommu.intremap)) {
+            config.table_flags |= ACPI_HAS_DMAR;
+            config.dmar_flag = DMAR_INTR_REMAP;
+            if (!libxl_defbool_is_default(info->u.hvm.viommu.x2apic)
+                && !libxl_defbool_val(info->u.hvm.viommu.x2apic))
+                config.dmar_flag |= DMAR_X2APIC_OPT_OUT;
+
+            config.viommu_base_addr = info->u.hvm.viommu.base_addr;
+            data = NULL;
+            e = libxl__acpi_build_dmar(gc, &config, &data, &datalen);
+            if (e) {
+                LOGE(ERROR, "failed to build DMAR table");
+                rc = ERROR_FAIL;
+                goto out;
+            }
+
+            libxl__ptr_add(gc, data);
+            if (datalen) {
+                if (!dom->acpi_modules[0].data) {
+                    dom->acpi_modules[0].data = data;
+                    dom->acpi_modules[0].length = (uint32_t)datalen;
+                } else {
+                    /* joint tables */
+                    void *newdata;
+                    newdata = malloc(datalen + dom->acpi_modules[0].length);
+                    if (!newdata) {
+                        LOGE(ERROR, "failed to joint DMAR table to acpi modules");
+                        rc = ERROR_FAIL;
+                        goto out;
+                    }
+                    memcpy(newdata, dom->acpi_modules[0].data,
+                           dom->acpi_modules[0].length);
+                    memcpy(newdata + dom->acpi_modules[0].length, data, datalen);
+                    dom->acpi_modules[0].data = newdata;
+                    dom->acpi_modules[0].length += (uint32_t)datalen;
+                }
+            }
         }
     }
 
