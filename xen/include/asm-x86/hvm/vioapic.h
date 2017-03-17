@@ -64,6 +64,7 @@ struct hvm_vioapic {
 struct hvm_vioapic *gsi_vioapic(const struct domain *d, unsigned int gsi,
                                 unsigned int *pin);
 
+int vioapic_pin_vector(struct hvm_vioapic *vioapic, unsigned int pin);
 int vioapic_init(struct domain *d);
 void vioapic_deinit(struct domain *d);
 void vioapic_reset(struct domain *d);

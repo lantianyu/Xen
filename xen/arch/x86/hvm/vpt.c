@@ -101,7 +101,7 @@ static int pt_irq_vector(struct periodic_time *pt, enum hvm_intsrc src)
         return -1;
     }
 
-    return vioapic->redirtbl[pin].fields.vector;
+    return vioapic_pin_vector(vioapic, pin);
 }
 
 static int pt_irq_masked(struct periodic_time *pt)
