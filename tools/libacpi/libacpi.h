@@ -20,6 +20,8 @@
 #ifndef __LIBACPI_H__
 #define __LIBACPI_H__
 
+#include "acpi2_0.h"
+
 #define ACPI_HAS_COM1              (1<<0)
 #define ACPI_HAS_COM2              (1<<1)
 #define ACPI_HAS_LPT1              (1<<2)
@@ -36,6 +38,7 @@
 #define ACPI_HAS_8042              (1<<13)
 #define ACPI_HAS_CMOS_RTC          (1<<14)
 #define ACPI_HAS_SSDT_LAPTOP_SLATE (1<<15)
+#define ACPI_HAS_DMAR              (1<<16)
 
 struct xen_vmemrange;
 struct acpi_numa {
@@ -96,8 +99,16 @@ struct acpi_config {
     uint32_t ioapic_base_address;
     uint16_t pci_isa_irq_mask;
     uint8_t ioapic_id;
+
+    /* dmar info */
+    uint8_t dmar_flag;
+    uint64_t viommu_base_addr;
 };
 
+#define DMAR_INTR_REMAP 0x1
+#define DMAR_X2APIC_OPT_OUT 0x2
+struct acpi_dmar *construct_dmar(struct acpi_ctxt *ctxt,
+                                 const struct acpi_config *config);
 int acpi_build_tables(struct acpi_ctxt *ctxt, struct acpi_config *config);
 
 #endif /* __LIBACPI_H__ */
