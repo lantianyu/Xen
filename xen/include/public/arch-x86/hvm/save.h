@@ -360,25 +360,6 @@ DECLARE_HVM_SAVE_TYPE(PIC, 3, struct hvm_hw_vpic);
 /*
  * IO-APIC
  */
-
-union vioapic_redir_entry
-{
-    uint64_t bits;
-    struct {
-        uint8_t vector;
-        uint8_t delivery_mode:3;
-        uint8_t dest_mode:1;
-        uint8_t delivery_status:1;
-        uint8_t polarity:1;
-        uint8_t remote_irr:1;
-        uint8_t trig_mode:1;
-        uint8_t mask:1;
-        uint8_t reserve:7;
-        uint8_t reserved[4];
-        uint8_t dest_id;
-    } fields;
-};
-
 struct ir_ioapic_rte
 {
     uint8_t vector;
@@ -396,6 +377,25 @@ struct ir_ioapic_rte
 };
 
 #define IR_IOAPIC_RTE_INDEX(rte)    (((rte)->index2 << 15) + (rte)->index1)
+
+union vioapic_redir_entry
+{
+    uint64_t bits;
+    struct {
+        uint8_t vector;
+        uint8_t delivery_mode:3;
+        uint8_t dest_mode:1;
+        uint8_t delivery_status:1;
+        uint8_t polarity:1;
+        uint8_t remote_irr:1;
+        uint8_t trig_mode:1;
+        uint8_t mask:1;
+        uint8_t reserve:7;
+        uint8_t reserved[4];
+        uint8_t dest_id;
+    } fields;
+    struct ir_ioapic_rte ir;
+};
 
 #define VIOAPIC_NUM_PINS  48 /* 16 ISA IRQs, 32 non-legacy PCI IRQS. */
 
