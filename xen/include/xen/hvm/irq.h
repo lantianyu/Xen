@@ -66,6 +66,8 @@ struct hvm_gmsi_info {
     bool posted; /* directly deliver to guest via VT-d PI? */
 };
 
+#define IR_MSI_INDEX(data, addr) (((((addr) & 0x4) << 13) + (((addr) & 0xfffff) >> 5)) + (!!((addr) & 0x8)) * ((data) & 0xffff))
+
 struct hvm_girq_dpci_mapping {
     struct list_head list;
     uint8_t bus;
