@@ -22,6 +22,9 @@
 
 #include <xen/viommu.h>
 #include <asm/types.h>
+#include <asm/processor.h>
+
+extern struct viommu_ops vvtd_hvm_vmx_ops;
 
 /* IRQ request type */
 #define VIOMMU_REQUEST_IRQ_MSI          0
