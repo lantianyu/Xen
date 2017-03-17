@@ -47,6 +47,8 @@ struct IO_APIC_route_remap_entry {
     };
 };
 
+#define IOAPIC_REMAP_ENTRY_INDEX(x) ((x.index_15 << 15) + x.index_0_14)
+
 struct msi_msg_remap_entry {
     union {
         u32 val;
@@ -64,5 +66,9 @@ struct msi_msg_remap_entry {
     u32	address_hi;	/* high 32 bits of msi message address */
     u32	data;		/* msi message data */
 };
+
+#define MSI_REMAP_ENTRY_INDEX(x) ((x.address_lo.index_15 << 15) + \
+                                  x.address_lo.index_0_14 + \
+                                  (x.address_lo.SHV ? (uint16_t)x.data : 0))
 
 #endif // _VTD_H_
