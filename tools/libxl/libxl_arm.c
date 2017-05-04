@@ -1065,6 +1065,13 @@ void libxl__arch_domain_build_info_acpi_setdefault(
     libxl_defbool_setdefault(&b_info->acpi, false);
 }
 
+int libxl__arch_create_viommu(libxl__gc *gc,
+                         const libxl_domain_config *d_config,
+                         uint32_t domid)
+{
+    return 0;
+}
+
 /*
  * Local variables:
  * mode: C
