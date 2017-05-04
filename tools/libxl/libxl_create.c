@@ -557,6 +557,10 @@ int libxl__domain_make(libxl__gc *gc, libxl_domain_config *d_config,
         }
     }
 
+    rc = libxl__arch_create_viommu(gc, d_config, *domid);
+    if (rc < 0)
+        goto out;
+
     rc = libxl__arch_domain_save_config(gc, d_config, xc_config);
     if (rc < 0)
         goto out;

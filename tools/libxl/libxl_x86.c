@@ -2,6 +2,7 @@
 #include "libxl_arch.h"
 
 #include <xc_dom.h>
+#include <xen/viommu.h>
 
 int libxl__arch_domain_prepare_config(libxl__gc *gc,
                                       libxl_domain_config *d_config,
@@ -585,6 +586,29 @@ void libxl__arch_domain_build_info_acpi_setdefault(
                                         libxl_domain_build_info *b_info)
 {
     libxl_defbool_setdefault(&b_info->acpi, true);
+}
+
+int libxl__arch_create_viommu(libxl__gc *gc,
+                              const libxl_domain_config *d_config,
+                              uint32_t domid)
+{
+    int rc = 0;
+    libxl_ctx *ctx = libxl__gc_owner(gc);
+    libxl_viommu_info viommu = d_config->b_info.u.hvm.viommu;
+
+    if (viommu.type == VIOMMU_TYPE_INTEL_VTD) {
+        uint32_t id;
+        uint64_t cap;
+
+        rc = xc_viommu_query_cap(ctx->xch, domid, viommu.type, &cap);
+        if (rc || ((cap & viommu.cap) != cap))
+            return rc;
+
+        rc = xc_viommu_create(ctx->xch, domid, viommu.type,
+                              viommu.base_addr, viommu.length, viommu.cap, &id);
+    }
+
+    return rc;
 }
 
 /*
