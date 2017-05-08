@@ -1374,25 +1374,11 @@ static int lapic_save_regs(struct domain *d, hvm_domain_context_t *h)
  */
 static void lapic_load_fixup(struct vlapic *vlapic)
 {
-    uint32_t id = vlapic->loaded.id;
-
-    if ( vlapic_x2apic_mode(vlapic) && id && vlapic->loaded.ldr == 1 )
-    {
-        /*
-         * This is optional: ID != 0 contradicts LDR == 1. It's being added
-         * to aid in eventual debugging of issues arising from the fixup done
-         * here, but can be dropped as soon as it is found to conflict with
-         * other (future) changes.
-         */
-        if ( GET_xAPIC_ID(id) != vlapic_vcpu(vlapic)->vcpu_id * 2 ||
-             id != SET_xAPIC_ID(GET_xAPIC_ID(id)) )
-            printk(XENLOG_G_WARNING "%pv: bogus APIC ID %#x loaded\n",
-                   vlapic_vcpu(vlapic), id);
+    if ( vlapic_x2apic_mode(vlapic) )
         set_x2apic_id(vlapic);
-    }
     else /* Undo an eventual earlier fixup. */
     {
-        vlapic_set_reg(vlapic, APIC_ID, id);
+        vlapic_set_reg(vlapic, APIC_ID, vlapic->loaded.id);
         vlapic_set_reg(vlapic, APIC_LDR, vlapic->loaded.ldr);
     }
 }
