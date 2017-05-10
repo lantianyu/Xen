@@ -52,6 +52,8 @@ int viommu_destroy(struct domain *d, u32 viommu_id);
 int viommu_register_type(u64 type, struct viommu_ops * ops);
 void viommu_unregister_type(u64 type);
 u64 viommu_query_caps(struct domain *d, u64 viommu_type);
+int viommu_domctl(struct domain *d, struct xen_domctl_viommu_op *op,
+                  bool_t *need_copy);
 int viommu_setup(void);
 #else
 static inline int viommu_init_domain(struct domain *d) { return 0 };
@@ -62,8 +64,12 @@ static inline int viommu_register_type(u64 type, struct viommu_ops * ops)
 { return 0; };
 static inline void viommu_unregister_type(u64 type) { };
 static inline u64 viommu_query_caps(struct domain *d, u64 viommu_type)
-                { return -ENODEV };
+{ return -ENODEV };
 static inline int __init viommu_setup(void) { return 0 };
+static inline int viommu_domctl(struct domain *d,
+                                struct xen_domctl_viommu_op *op,
+                                bool_t *need_copy)
+{ return -ENODEV };
 #endif
 
 #endif /* __XEN_VIOMMU_H__ */

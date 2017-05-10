@@ -30,6 +30,41 @@ struct viommu_type {
     struct list_head node;
 };
 
+int viommu_domctl(struct domain *d, struct xen_domctl_viommu_op *op,
+                  bool_t *need_copy)
+{
+    int rc = -EINVAL;
+
+    switch ( op->cmd )
+    {
+    case XEN_DOMCTL_create_viommu:
+		rc = viommu_create(d, op->u.create_viommu.viommu_type,
+                           op->u.create_viommu.base_address,
+                           op->u.create_viommu.length,
+                           op->u.create_viommu.capabilities);
+        if (rc >= 0) {
+            op->u.create_viommu.viommu_id = rc;
+            *need_copy = true;
+        }
+        break;
+
+    case XEN_DOMCTL_destroy_viommu:
+        rc = viommu_destroy(d, op->u.destroy_viommu.viommu_id);
+        break;
+
+    case XEN_DOMCTL_query_viommu_caps:
+        op->u.query_caps.caps
+                = viommu_query_caps(d, op->u.query_caps.viommu_type);
+        *need_copy = true;
+        break;
+
+    default:
+        break;
+    }
+
+    return rc;
+}
+
 int viommu_init_domain(struct domain *d)
 {
     d->viommu.nr_viommu = 0;
