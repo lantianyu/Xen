@@ -61,6 +61,7 @@ obj-y += vm_event.o
 obj-y += vmap.o
 obj-y += vsprintf.o
 obj-y += wait.o
+obj-$(CONFIG_VIOMMU) += viommu.o
 obj-bin-y += warning.init.o
 obj-$(CONFIG_XENOPROF) += xenoprof.o
 obj-y += xmalloc_tlsf.o
