@@ -73,6 +73,18 @@ config TMEM
 
 	  If unsure, say Y.
 
+config VIOMMU
+	def_bool y
+	depends on X86
+	---help---
+	  Virtual IOMMU provides interrupt remapping function for guest and
+	  it allows guest to boot up more than 255 vcpus which requires interrupt
+	  remapping function.
+
+	  You also have to enable it on the Xen commandline by using viommu=1
+
+	  If unsure, say Y.
+
 config XENOPROF
 	def_bool y
 	prompt "Xen Oprofile Support" if EXPERT = "y"

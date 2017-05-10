@@ -1513,6 +1513,7 @@ void __init noreturn __start_xen(unsigned long mbi_p)
     early_msi_init();
 
     iommu_setup();    /* setup iommu if available */
+    viommu_setup();
 
     smp_prepare_cpus(max_cpus);
 
