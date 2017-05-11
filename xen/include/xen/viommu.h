@@ -32,6 +32,8 @@ struct viommu_ops {
     int (*destroy)(struct viommu *viommu);
     int (*handle_irq_request)(struct domain *d,
                               struct irq_remapping_request *request);
+    int (*get_irq_info)(struct domain *d, struct irq_remapping_request *request,
+                        struct irq_remapping_info *info);
 };
 
 struct viommu {
@@ -61,6 +63,9 @@ int viommu_domctl(struct domain *d, struct xen_domctl_viommu_op *op,
 int viommu_setup(void);
 int viommu_handle_irq_request(struct domain *d, u32 viommu_id,
                               struct irq_remapping_request *request);
+int viommu_get_irq_info(struct domain *d, u32 viommu_id, 
+                        struct irq_remapping_request *request,
+                        struct irq_remapping_info *irq_info);
 #else
 static inline int viommu_init_domain(struct domain *d) { return 0 };
 static inline int viommu_create(struct domain *d, u64 type, u64 base_address,
@@ -78,6 +83,10 @@ static inline int viommu_domctl(struct domain *d,
 { return -ENODEV };
 static inline int viommu_handle_irq_request(struct domain *d, u32 viommu_id,
                               struct irq_remapping_request *request)
+{ return 0 };
+static inline int viommu_get_irq_info(struct domain *d, u32 viommu_id,
+                                      struct irq_remapping_request *request,
+                                      struct irq_remapping_info *irq_info)
 { return 0 };
 #endif
 
