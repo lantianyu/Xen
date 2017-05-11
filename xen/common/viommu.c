@@ -206,6 +206,22 @@ int viommu_handle_irq_request(struct domain *d, u32 viommu_id,
     return info->viommu[viommu_id]->ops->handle_irq_request(d, request);
 }
 
+int viommu_get_irq_info(struct domain *d, u32 viommu_id,
+                        struct irq_remapping_request *request,
+                        struct irq_remapping_info *irq_info)
+{
+    struct viommu_info *info = &d->viommu;
+
+    if ( viommu_id >= info->nr_viommu
+         || !info->viommu[viommu_id] )
+        return -EINVAL;
+
+    if ( !info->viommu[viommu_id]->ops->get_irq_info )
+        return -EINVAL;
+
+    return info->viommu[viommu_id]->ops->get_irq_info(d, request, irq_info);
+}
+
 /*
  * Local variables:
  * mode: C
