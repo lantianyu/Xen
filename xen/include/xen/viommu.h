@@ -49,6 +49,8 @@ extern bool_t opt_viommu;
 static inline bool_t viommu_enabled(void) { return opt_viommu; }
 int viommu_init_domain(struct domain *d);
 int viommu_register_type(u64 type, struct viommu_ops * ops);
+int viommu_domctl(struct domain *d, struct xen_domctl_viommu_op *op,
+                  bool_t *need_copy);
 int viommu_setup(void);
 #else
 static inline int viommu_init_domain(struct domain *d) { return 0; }
@@ -56,6 +58,10 @@ static inline int viommu_register_type(u64 type, struct viommu_ops * ops)
 { return 0; }
 static inline int __init viommu_setup(void) { return 0; }
 static inline bool_t viommu_enabled(void) { return 0; }
+static inline int viommu_domctl(struct domain *d,
+                                struct xen_domctl_viommu_op *op,
+                                bool_t *need_copy)
+{ return -ENODEV };
 #endif
 
 #endif /* __XEN_VIOMMU_H__ */

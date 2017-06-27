@@ -1141,6 +1141,44 @@ struct xen_domctl_psr_cat_op {
 typedef struct xen_domctl_psr_cat_op xen_domctl_psr_cat_op_t;
 DEFINE_XEN_GUEST_HANDLE(xen_domctl_psr_cat_op_t);
 
+struct xen_domctl_viommu_op {
+    uint32_t cmd;
+#define XEN_DOMCTL_create_viommu          0
+#define XEN_DOMCTL_destroy_viommu         1
+#define XEN_DOMCTL_query_viommu_caps      2
+    union {
+        struct {
+            /* IN - vIOMMU type */
+            uint64_t viommu_type;
+            /* 
+             * IN - MMIO base address of vIOMMU. vIOMMU device models
+             * are in charge of to check base_address and length.
+             */
+            uint64_t base_address;
+            /* IN - Length of MMIO region */
+            uint64_t length;
+            /* IN - Capabilities with which we want to create */
+            uint64_t capabilities;
+            /* OUT - vIOMMU identity */
+            uint32_t viommu_id;
+        } create_viommu;
+
+        struct {
+            /* IN - vIOMMU identity */
+            uint32_t viommu_id;
+        } destroy_viommu;
+
+        struct {
+            /* IN - vIOMMU type */
+            uint64_t viommu_type;
+            /* OUT - vIOMMU Capabilities */
+            uint64_t caps;
+        } query_caps;
+    } u;
+};
+typedef struct xen_domctl_viommu_op xen_domctl_viommu_op;
+DEFINE_XEN_GUEST_HANDLE(xen_domctl_viommu_op);
+
 struct xen_domctl {
     uint32_t cmd;
 #define XEN_DOMCTL_createdomain                   1
@@ -1218,6 +1256,7 @@ struct xen_domctl {
 #define XEN_DOMCTL_monitor_op                    77
 #define XEN_DOMCTL_psr_cat_op                    78
 #define XEN_DOMCTL_soft_reset                    79
+#define XEN_DOMCTL_viommu_op                     80
 #define XEN_DOMCTL_gdbsx_guestmemio            1000
 #define XEN_DOMCTL_gdbsx_pausevcpu             1001
 #define XEN_DOMCTL_gdbsx_unpausevcpu           1002
@@ -1280,6 +1319,7 @@ struct xen_domctl {
         struct xen_domctl_psr_cmt_op        psr_cmt_op;
         struct xen_domctl_monitor_op        monitor_op;
         struct xen_domctl_psr_cat_op        psr_cat_op;
+        struct xen_domctl_viommu_op         viommu_op;
         uint8_t                             pad[128];
     } u;
 };
