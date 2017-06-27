@@ -1141,6 +1141,9 @@ long do_domctl(XEN_GUEST_HANDLE_PARAM(xen_domctl_t) u_domctl)
         if ( !ret )
             copyback = 1;
         break;
+    case XEN_DOMCTL_viommu_op:
+        ret = viommu_domctl(d, &op->u.viommu_op, &copyback);
+        break;
 
     default:
         ret = arch_do_domctl(op, d, u_domctl);
