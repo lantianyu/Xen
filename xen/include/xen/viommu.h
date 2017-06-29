@@ -20,6 +20,8 @@
 #ifndef __XEN_VIOMMU_H__
 #define __XEN_VIOMMU_H__
 
+#include <asm/viommu.h>
+
 #define NR_VIOMMU_PER_DOMAIN 1
 
 struct viommu;
@@ -28,6 +30,8 @@ struct viommu_ops {
     u64 (*query_caps)(struct domain *d);
     int (*create)(struct domain *d, struct viommu *viommu);
     int (*destroy)(struct viommu *viommu);
+    int (*handle_irq_request)(struct domain *d,
+                              struct irq_remapping_request *request);
 };
 
 struct viommu {
@@ -52,6 +56,8 @@ int viommu_register_type(u64 type, struct viommu_ops * ops);
 int viommu_domctl(struct domain *d, struct xen_domctl_viommu_op *op,
                   bool_t *need_copy);
 int viommu_setup(void);
+int viommu_handle_irq_request(struct domain *d, u32 viommu_id,
+                              struct irq_remapping_request *request);
 #else
 static inline int viommu_init_domain(struct domain *d) { return 0; }
 static inline int viommu_register_type(u64 type, struct viommu_ops * ops)
@@ -62,6 +68,9 @@ static inline int viommu_domctl(struct domain *d,
                                 struct xen_domctl_viommu_op *op,
                                 bool *need_copy)
 { return -ENODEV };
+static inline int viommu_handle_irq_request(struct domain *d, u32 viommu_id,
+                              struct irq_remapping_request *request)
+{ return 0 };
 #endif
 
 #endif /* __XEN_VIOMMU_H__ */
