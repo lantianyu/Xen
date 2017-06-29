@@ -32,6 +32,13 @@
 /* Supported capabilities by vvtd */
 unsigned int vvtd_caps = VIOMMU_CAP_IRQ_REMAPPING;
 
+struct hvm_hw_vvtd_status {
+    uint32_t eim_enabled : 1;
+    uint32_t irt_max_entry;
+    /* Interrupt remapping table base gfn */
+    uint64_t irt;
+};
+
 union hvm_hw_vvtd_regs {
     uint32_t data32[256];
     uint64_t data64[128];
@@ -43,6 +50,8 @@ struct vvtd {
     uint64_t length;
     /* Point back to the owner domain */
     struct domain *domain;
+
+    struct hvm_hw_vvtd_status status;
     union hvm_hw_vvtd_regs *regs;
     struct page_info *regs_page;
 };
@@ -70,6 +79,11 @@ struct vvtd *domain_vvtd(struct domain *d)
     return (d->viommu) ? d->viommu->priv : NULL;
 }
 
+static inline void vvtd_set_bit(struct vvtd *vvtd, uint32_t reg, int nr)
+{
+    __set_bit(nr, &vvtd->regs->data32[reg/sizeof(uint32_t)]);
+}
+
 static inline void vvtd_set_reg(struct vvtd *vtd, uint32_t reg, uint32_t value)
 {
     vtd->regs->data32[reg/sizeof(uint32_t)] = value;
@@ -89,6 +103,44 @@ static inline void vvtd_set_reg_quad(struct vvtd *vtd, uint32_t reg,
 static inline uint64_t vvtd_get_reg_quad(struct vvtd *vtd, uint32_t reg)
 {
     return vtd->regs->data64[reg/sizeof(uint64_t)];
+}
+
+static void vvtd_handle_gcmd_sirtp(struct vvtd *vvtd, uint32_t val)
+{
+    uint64_t irta = vvtd_get_reg_quad(vvtd, DMAR_IRTA_REG);
+
+    if ( !(val & DMA_GCMD_SIRTP) )
+        return;
+
+    vvtd->status.irt = DMA_IRTA_ADDR(irta) >> PAGE_SHIFT;
+    vvtd->status.irt_max_entry = DMA_IRTA_SIZE(irta);
+    vvtd->status.eim_enabled = !!(irta & IRTA_EIME);
+    vvtd_info("Update IR info (addr=%lx eim=%d size=%d).",
+              vvtd->status.irt, vvtd->status.eim_enabled,
+              vvtd->status.irt_max_entry);
+    vvtd_set_bit(vvtd, DMAR_GSTS_REG, DMA_GSTS_SIRTPS_SHIFT);
+}
+
+static int vvtd_write_gcmd(struct vvtd *vvtd, uint32_t val)
+{
+    uint32_t orig = vvtd_get_reg(vvtd, DMAR_GSTS_REG);
+    uint32_t changed;
+
+    orig = orig & DMA_GCMD_ONE_SHOT_MASK;   /* reset the one-shot bits */
+    changed = orig ^ val;
+
+    if ( !changed )
+        return X86EMUL_OKAY;
+
+    if ( changed & (changed - 1) )
+        vvtd_info("Guest attempts to write %x to GCMD (current GSTS is %x)," 
+                  "it would lead to update multiple fields",
+                  val, orig);
+
+    if ( changed & DMA_GCMD_SIRTP )
+        vvtd_handle_gcmd_sirtp(vvtd, val);
+
+    return X86EMUL_OKAY;
 }
 
 static int vvtd_in_range(struct vcpu *v, unsigned long addr)
@@ -135,13 +187,30 @@ static int vvtd_write(struct vcpu *v, unsigned long addr,
     {
         switch ( offset )
         {
+        case DMAR_GCMD_REG:
+            return vvtd_write_gcmd(vvtd, val);
+
         case DMAR_IEDATA_REG:
         case DMAR_IEADDR_REG:
         case DMAR_IEUADDR_REG:
         case DMAR_FEDATA_REG:
         case DMAR_FEADDR_REG:
         case DMAR_FEUADDR_REG:
+        case DMAR_IRTA_REG:
+        case DMAR_IRTA_REG_HI:
             vvtd_set_reg(vvtd, offset, val);
+            break;
+
+        default:
+            break;
+        }
+    }
+    else /* len == 8 */
+    {
+        switch ( offset )
+        {
+        case DMAR_IRTA_REG:
+            vvtd_set_reg_quad(vvtd, DMAR_IRTA_REG, val);
             break;
 
         default:

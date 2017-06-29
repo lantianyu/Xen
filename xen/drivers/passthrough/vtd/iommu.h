@@ -153,6 +153,8 @@
 #define DMA_GCMD_IRE    (((u64)1) << 25)
 #define DMA_GCMD_SIRTP  (((u64)1) << 24)
 #define DMA_GCMD_CFI    (((u64)1) << 23)
+/* mask of one-shot bits */
+#define DMA_GCMD_ONE_SHOT_MASK 0x96ffffff 
 
 /* GSTS_REG */
 #define DMA_GSTS_TES    (((u64)1) << 31)
@@ -162,8 +164,16 @@
 #define DMA_GSTS_WBFS   (((u64)1) << 27)
 #define DMA_GSTS_QIES   (((u64)1) <<26)
 #define DMA_GSTS_IRES   (((u64)1) <<25)
-#define DMA_GSTS_SIRTPS (((u64)1) << 24)
+#define DMA_GSTS_SIRTPS_SHIFT   24
+#define DMA_GSTS_SIRTPS (((u64)1) << DMA_GSTS_SIRTPS_SHIFT)
 #define DMA_GSTS_CFIS   (((u64)1) <<23)
+
+/* IRTA_REG */
+/* The base of 4KB aligned interrupt remapping table */
+#define DMA_IRTA_ADDR(val)      ((val) & ~0xfffULL)
+/* The size of remapping table is 2^(x+1), where x is the size field in IRTA */
+#define DMA_IRTA_S(val)         (val & 0xf)
+#define DMA_IRTA_SIZE(val)      (1UL << (DMA_IRTA_S(val) + 1))
 
 /* PMEN_REG */
 #define DMA_PMEN_EPM    (((u32)1) << 31)
