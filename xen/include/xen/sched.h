@@ -33,6 +33,10 @@
 DEFINE_XEN_GUEST_HANDLE(vcpu_runstate_info_compat_t);
 #endif
 
+#ifdef CONFIG_VIOMMU
+#include <xen/viommu.h>
+#endif
+
 /*
  * Stats
  *
@@ -478,6 +482,10 @@ struct domain
     /* vNUMA topology accesses are protected by rwlock. */
     rwlock_t vnuma_rwlock;
     struct vnuma_info *vnuma;
+
+#ifdef CONFIG_VIOMMU
+    struct viommu *viommu;
+#endif
 
     /* Common monitor options */
     struct {
