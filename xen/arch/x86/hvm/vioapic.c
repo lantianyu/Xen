@@ -30,6 +30,7 @@
 #include <xen/lib.h>
 #include <xen/errno.h>
 #include <xen/sched.h>
+#include <xen/viommu.h>
 #include <public/hvm/ioreq.h>
 #include <asm/hvm/io.h>
 #include <asm/hvm/vpic.h>
@@ -38,6 +39,7 @@
 #include <asm/current.h>
 #include <asm/event.h>
 #include <asm/io_apic.h>
+#include <asm/viommu.h>
 
 /* HACK: Route IRQ0 only to VCPU0 to prevent time jumps. */
 #define IRQ0_SPECIAL_ROUTING 1
@@ -387,8 +389,16 @@ static void vioapic_deliver(struct hvm_vioapic *vioapic, unsigned int pin)
     struct vlapic *target;
     struct vcpu *v;
     unsigned int irq = vioapic->base_gsi + pin;
+    struct arch_irq_remapping_request request;
 
     ASSERT(spin_is_locked(&d->arch.hvm_domain.irq_lock));
+
+    irq_request_ioapic_fill(&request, vioapic->id, vioapic->redirtbl[pin].bits);
+    if ( viommu_check_irq_remapping(d, &request) )
+    {
+        viommu_handle_irq_request(d, &request);
+        return;
+    }
 
     HVM_DBG_LOG(DBG_LEVEL_IOAPIC,
                 "dest=%x dest_mode=%x delivery_mode=%x "
