@@ -517,6 +517,7 @@ enum pt_irq_type {
     PT_IRQ_TYPE_MSI,
     PT_IRQ_TYPE_MSI_TRANSLATE,
     PT_IRQ_TYPE_SPI,    /* ARM: valid range 32-1019 */
+    PT_IRQ_TYPE_MSI_IR,
 };
 struct xen_domctl_bind_pt_irq {
     uint32_t machine_irq;
@@ -543,6 +544,12 @@ struct xen_domctl_bind_pt_irq {
 
             uint64_aligned_t gtable;
         } msi;
+        struct {
+            uint32_t source_id;
+            uint32_t data;
+            uint64_t addr;
+            uint64_t gtable;
+        } msi_ir;
         struct {
             uint16_t spi;
         } spi;
