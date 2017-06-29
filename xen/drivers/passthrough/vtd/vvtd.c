@@ -33,7 +33,8 @@
 unsigned int vvtd_caps = VIOMMU_CAP_IRQ_REMAPPING;
 
 struct hvm_hw_vvtd_status {
-    uint32_t eim_enabled : 1;
+    uint32_t eim_enabled : 1,
+             intremap_enabled : 1;
     uint32_t irt_max_entry;
     /* Interrupt remapping table base gfn */
     uint64_t irt;
@@ -84,6 +85,11 @@ static inline void vvtd_set_bit(struct vvtd *vvtd, uint32_t reg, int nr)
     __set_bit(nr, &vvtd->regs->data32[reg/sizeof(uint32_t)]);
 }
 
+static inline void vvtd_clear_bit(struct vvtd *vvtd, uint32_t reg, int nr)
+{
+    __clear_bit(nr, &vvtd->regs->data32[reg/sizeof(uint32_t)]);
+}
+
 static inline void vvtd_set_reg(struct vvtd *vtd, uint32_t reg, uint32_t value)
 {
     vtd->regs->data32[reg/sizeof(uint32_t)] = value;
@@ -105,12 +111,32 @@ static inline uint64_t vvtd_get_reg_quad(struct vvtd *vtd, uint32_t reg)
     return vtd->regs->data64[reg/sizeof(uint64_t)];
 }
 
+static void vvtd_handle_gcmd_ire(struct vvtd *vvtd, uint32_t val)
+{
+    vvtd_info("%sable Interrupt Remapping",
+              (val & DMA_GCMD_IRE) ? "En" : "Dis");
+
+    if ( val & DMA_GCMD_IRE )
+    {
+        vvtd->status.intremap_enabled = true;
+        vvtd_set_bit(vvtd, DMAR_GSTS_REG, DMA_GSTS_IRES_SHIFT);
+    }
+    else
+    {
+        vvtd->status.intremap_enabled = false;
+        vvtd_clear_bit(vvtd, DMAR_GSTS_REG, DMA_GSTS_IRES_SHIFT);
+    }
+}
+
 static void vvtd_handle_gcmd_sirtp(struct vvtd *vvtd, uint32_t val)
 {
     uint64_t irta = vvtd_get_reg_quad(vvtd, DMAR_IRTA_REG);
 
     if ( !(val & DMA_GCMD_SIRTP) )
         return;
+
+    if ( vvtd->status.intremap_enabled )
+        vvtd_info("Update Interrupt Remapping Table when active\n");
 
     vvtd->status.irt = DMA_IRTA_ADDR(irta) >> PAGE_SHIFT;
     vvtd->status.irt_max_entry = DMA_IRTA_SIZE(irta);
@@ -139,6 +165,8 @@ static int vvtd_write_gcmd(struct vvtd *vvtd, uint32_t val)
 
     if ( changed & DMA_GCMD_SIRTP )
         vvtd_handle_gcmd_sirtp(vvtd, val);
+    if ( changed & DMA_GCMD_IRE )
+        vvtd_handle_gcmd_ire(vvtd, val);
 
     return X86EMUL_OKAY;
 }
