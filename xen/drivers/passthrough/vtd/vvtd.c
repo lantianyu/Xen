@@ -496,6 +496,19 @@ static void vvtd_handle_gcmd_ire(struct vvtd *vvtd, uint32_t val)
     }
 }
 
+static void vvtd_handle_gcmd_qie(struct vvtd *vvtd, uint32_t val)
+{
+    vvtd_info("%sable Queue Invalidation", (val & DMA_GCMD_QIE) ? "En" : "Dis");
+
+    if ( val & DMA_GCMD_QIE )
+        vvtd_set_bit(vvtd, DMAR_GSTS_REG, DMA_GSTS_QIES_SHIFT);
+    else
+    {
+        vvtd_set_reg_quad(vvtd, DMAR_IQH_REG, 0);
+        vvtd_clear_bit(vvtd, DMAR_GSTS_REG, DMA_GSTS_QIES_SHIFT);
+    }
+}
+
 static void vvtd_handle_gcmd_sirtp(struct vvtd *vvtd, uint32_t val)
 {
     uint64_t irta = vvtd_get_reg_quad(vvtd, DMAR_IRTA_REG);
@@ -535,6 +548,10 @@ static int vvtd_write_gcmd(struct vvtd *vvtd, uint32_t val)
         vvtd_handle_gcmd_sirtp(vvtd, val);
     if ( changed & DMA_GCMD_IRE )
         vvtd_handle_gcmd_ire(vvtd, val);
+    if ( changed & DMA_GCMD_QIE )
+        vvtd_handle_gcmd_qie(vvtd, val);
+    if ( changed & ~(DMA_GCMD_SIRTP | DMA_GCMD_IRE | DMA_GCMD_QIE) )
+        vvtd_info("Only SIRTP, IRE, QIE in GCMD are handled");
 
     return X86EMUL_OKAY;
 }
