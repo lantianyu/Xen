@@ -177,6 +177,21 @@
 #define DMA_IRTA_S(val)         (val & 0xf)
 #define DMA_IRTA_SIZE(val)      (1UL << (DMA_IRTA_S(val) + 1))
 
+/* IQA_REG */
+#define DMA_IQA_ADDR(val)       (val & ~0xfffULL)
+#define DMA_IQA_QS(val)         (val & 0x7)
+#define DMA_IQA_RSVD            0xff8ULL
+
+/* IECTL_REG */
+#define DMA_IECTL_IM_SHIFT 31
+#define DMA_IECTL_IM            (1 << DMA_IECTL_IM_SHIFT)
+#define DMA_IECTL_IP_SHIFT 30
+#define DMA_IECTL_IP            (1 << DMA_IECTL_IP_SHIFT)
+
+/* ICS_REG */
+#define DMA_ICS_IWC_SHIFT       0
+#define DMA_ICS_IWC             (1 << DMA_ICS_IWC_SHIFT)
+
 /* PMEN_REG */
 #define DMA_PMEN_EPM    (((u32)1) << 31)
 #define DMA_PMEN_PRS    (((u32)1) << 0)
@@ -211,7 +226,8 @@
 #define DMA_FSTS_PPF (1U << DMA_FSTS_PPF_SHIFT)
 #define DMA_FSTS_AFO (1U << 2)
 #define DMA_FSTS_APF (1U << 3)
-#define DMA_FSTS_IQE (1U << 4)
+#define DMA_FSTS_IQE_SHIFT 4
+#define DMA_FSTS_IQE (1U << DMA_FSTS_IQE_SHIFT)
 #define DMA_FSTS_ICE (1U << 5)
 #define DMA_FSTS_ITE (1U << 6)
 #define DMA_FSTS_PRO_SHIFT 7
@@ -562,6 +578,7 @@ struct qinval_entry {
 
 /* Queue invalidation head/tail shift */
 #define QINVAL_INDEX_SHIFT 4
+#define QINVAL_INDEX_MASK  0x7fff0ULL
 
 #define qinval_present(v) ((v).lo & 1)
 #define qinval_fault_disable(v) (((v).lo >> 1) & 1)
