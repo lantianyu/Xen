@@ -66,6 +66,12 @@
 #define VER_MAJOR(v)        (((v) & 0xf0) >> 4)
 #define VER_MINOR(v)        ((v) & 0x0f)
 
+/* Supported Adjusted Guest Address Widths */
+#define DMA_CAP_SAGAW_SHIFT         8
+ /* 39-bit AGAW, 3-level page-table */
+#define DMA_CAP_SAGAW_39bit         (0x2ULL << DMA_CAP_SAGAW_SHIFT)
+#define DMA_CAP_ND_64K              6ULL
+
 /*
  * Decoding Capability Register
  */
@@ -74,6 +80,7 @@
 #define cap_write_drain(c)     (((c) >> 54) & 1)
 #define cap_max_amask_val(c)   (((c) >> 48) & 0x3f)
 #define cap_num_fault_regs(c)  ((((c) >> 40) & 0xff) + 1)
+#define cap_set_num_fault_regs(c)  ((((c) - 1) & 0xff) << 40)
 #define cap_pgsel_inv(c)       (((c) >> 39) & 1)
 
 #define cap_super_page_val(c)  (((c) >> 34) & 0xf)
@@ -85,11 +92,13 @@
 #define cap_sps_1tb(c)         ((c >> 37) & 1)
 
 #define cap_fault_reg_offset(c)    ((((c) >> 24) & 0x3ff) * 16)
+#define cap_set_fault_reg_offset(c) ((((c) / 16) & 0x3ff) << 24 )
 
 #define cap_isoch(c)        (((c) >> 23) & 1)
 #define cap_qos(c)        (((c) >> 22) & 1)
 #define cap_mgaw(c)        ((((c) >> 16) & 0x3f) + 1)
-#define cap_sagaw(c)        (((c) >> 8) & 0x1f)
+#define cap_set_mgaw(c)     ((((c) - 1) & 0x3f) << 16)
+#define cap_sagaw(c)        (((c) >> DMA_CAP_SAGAW_SHIFT) & 0x1f)
 #define cap_caching_mode(c)    (((c) >> 7) & 1)
 #define cap_phmr(c)        (((c) >> 6) & 1)
 #define cap_plmr(c)        (((c) >> 5) & 1)
@@ -104,10 +113,16 @@
 #define ecap_niotlb_iunits(e)    ((((e) >> 24) & 0xff) + 1)
 #define ecap_iotlb_offset(e)     ((((e) >> 8) & 0x3ff) * 16)
 #define ecap_coherent(e)         ((e >> 0) & 0x1)
-#define ecap_queued_inval(e)     ((e >> 1) & 0x1)
+#define DMA_ECAP_QI_SHIFT        1
+#define DMA_ECAP_QI              (1ULL << DMA_ECAP_QI_SHIFT)
+#define ecap_queued_inval(e)     ((e >> DMA_ECAP_QI_SHIFT) & 0x1)
 #define ecap_dev_iotlb(e)        ((e >> 2) & 0x1)
-#define ecap_intr_remap(e)       ((e >> 3) & 0x1)
-#define ecap_eim(e)              ((e >> 4) & 0x1)
+#define DMA_ECAP_IR_SHIFT        3
+#define DMA_ECAP_IR              (1ULL << DMA_ECAP_IR_SHIFT)
+#define ecap_intr_remap(e)       ((e >> DMA_ECAP_IR_SHIFT) & 0x1)
+#define DMA_ECAP_EIM_SHIFT       4
+#define DMA_ECAP_EIM             (1ULL << DMA_ECAP_EIM_SHIFT)
+#define ecap_eim(e)              ((e >> DMA_ECAP_EIM_SHIFT) & 0x1)
 #define ecap_cache_hints(e)      ((e >> 5) & 0x1)
 #define ecap_pass_thru(e)        ((e >> 6) & 0x1)
 #define ecap_snp_ctl(e)          ((e >> 7) & 0x1)
