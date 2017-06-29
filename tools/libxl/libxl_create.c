@@ -27,6 +27,8 @@
 
 #include <xen-xsm/flask/flask.h>
 
+#define VIOMMU_VTD_BASE_ADDR        0xfed90000ULL
+
 int libxl__domain_create_info_setdefault(libxl__gc *gc,
                                          libxl_domain_create_info *c_info)
 {
@@ -57,6 +59,47 @@ void libxl__rdm_setdefault(libxl__gc *gc, libxl_domain_build_info *b_info)
     if (b_info->u.hvm.rdm_mem_boundary_memkb == LIBXL_MEMKB_DEFAULT)
         b_info->u.hvm.rdm_mem_boundary_memkb =
                             LIBXL_RDM_MEM_BOUNDARY_MEMKB_DEFAULT;
+}
+
+static int libxl__viommu_set_default(libxl__gc *gc,
+                                     libxl_domain_build_info *b_info)
+{
+    int i;
+
+    if (!b_info->num_viommus)
+        return 0;
+
+    for (i = 0; i < b_info->num_viommus; i++) {
+        libxl_viommu_info *viommu = &b_info->viommu[i];
+
+        if (libxl_defbool_is_default(viommu->intremap))
+            libxl_defbool_set(&viommu->intremap, true);
+
+        if (!libxl_defbool_val(viommu->intremap)) {
+            LOGE(ERROR, "Cannot create one virtual VTD without intremap");
+            return ERROR_INVAL;
+        }
+
+        if (viommu->type == LIBXL_VIOMMU_TYPE_INTEL_VTD) {
+            /*
+             * If there are multiple vIOMMUs, we need arrange all vIOMMUs to
+             * avoid overlap. Put a check here in case we get here for multiple
+             * vIOMMUs case.
+             */
+            if (b_info->num_viommus > 1) {
+                LOGE(ERROR, "Multiple vIOMMUs support is under implementation");
+                return ERROR_INVAL;
+            }
+
+            /* Set default values to unexposed fields */
+            viommu->base_addr = VIOMMU_VTD_BASE_ADDR;
+
+            /* Set desired capbilities */
+            viommu->cap = VIOMMU_CAP_IRQ_REMAPPING;
+        }
+    }
+
+    return 0;
 }
 
 int libxl__domain_build_info_setdefault(libxl__gc *gc,
@@ -216,6 +259,9 @@ int libxl__domain_build_info_setdefault(libxl__gc *gc,
         b_info->event_channels = 1023;
 
     libxl__arch_domain_build_info_acpi_setdefault(b_info);
+
+    if (libxl__viommu_set_default(gc, b_info))
+        return ERROR_FAIL;
 
     switch (b_info->type) {
     case LIBXL_DOMAIN_TYPE_HVM:
@@ -903,6 +949,12 @@ static void initiate_domain_create(libxl__egc *egc,
         d_config->b_info.num_vnuma_nodes) {
         ret = ERROR_INVAL;
         LOGD(ERROR, domid, "PV vNUMA is not yet supported");
+        goto error_out;
+    }
+
+    if (d_config->b_info.num_viommus > 1) {
+        ret = ERROR_INVAL;
+        LOGD(ERROR, domid, "Cannot support multiple vIOMMUs");
         goto error_out;
     }
 
