@@ -21,6 +21,7 @@
 #include <xen/perfc.h>
 #include <asm/atomic.h>
 #include <xen/wait.h>
+#include <xen/viommu.h>
 #include <public/xen.h>
 #include <public/domctl.h>
 #include <public/sysctl.h>
@@ -477,6 +478,8 @@ struct domain
     /* vNUMA topology accesses are protected by rwlock. */
     rwlock_t vnuma_rwlock;
     struct vnuma_info *vnuma;
+
+    struct viommu *viommu;
 
     /* Common monitor options */
     struct {
