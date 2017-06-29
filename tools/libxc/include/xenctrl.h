@@ -27,6 +27,7 @@
 #define __XEN_TOOLS__ 1
 #endif
 
+#include <errno.h>
 #include <unistd.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -2498,6 +2499,13 @@ enum xc_static_cpu_featuremask {
 };
 const uint32_t *xc_get_static_cpu_featuremask(enum xc_static_cpu_featuremask);
 const uint32_t *xc_get_feature_deep_deps(uint32_t feature);
+
+int xc_viommu_query_cap(xc_interface *xch, domid_t dom,
+                        uint64_t type, uint64_t *cap);
+int xc_viommu_create(xc_interface *xch, domid_t dom, uint64_t type,
+                     uint64_t base_addr, uint64_t length, uint64_t cap,
+                     uint32_t *viommu_id);
+int xc_viommu_destroy(xc_interface *xch, domid_t dom, uint32_t viommu_id);
 
 #endif
 
