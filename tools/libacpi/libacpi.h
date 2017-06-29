@@ -20,6 +20,8 @@
 #ifndef __LIBACPI_H__
 #define __LIBACPI_H__
 
+#include <stdbool.h>
+
 #define ACPI_HAS_COM1              (1<<0)
 #define ACPI_HAS_COM2              (1<<1)
 #define ACPI_HAS_LPT1              (1<<2)
@@ -96,8 +98,15 @@ struct acpi_config {
     uint32_t ioapic_base_address;
     uint16_t pci_isa_irq_mask;
     uint8_t ioapic_id;
+
+    /* Emulated IOMMU features and location */
+    bool iommu_intremap_supported;
+    bool iommu_x2apic_supported;
+    uint64_t iommu_base_addr;
 };
 
+struct acpi_dmar *construct_dmar(struct acpi_ctxt *ctxt,
+                                 const struct acpi_config *config);
 int acpi_build_tables(struct acpi_ctxt *ctxt, struct acpi_config *config);
 
 #endif /* __LIBACPI_H__ */
