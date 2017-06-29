@@ -23,9 +23,11 @@
 #include <xen/sched.h>
 #include <xen/irq.h>
 #include <xen/keyhandler.h>
+#include <xen/viommu.h>
 #include <asm/hvm/domain.h>
 #include <asm/hvm/support.h>
 #include <asm/msi.h>
+#include <asm/viommu.h>
 
 /* Must be called with hvm_domain->irq_lock hold */
 static void assert_gsi(struct domain *d, unsigned ioapic_gsi)
@@ -339,6 +341,11 @@ int hvm_inject_msi(struct domain *d, uint64_t addr, uint32_t data)
     uint8_t trig_mode = (data & MSI_DATA_TRIGGER_MASK)
         >> MSI_DATA_TRIGGER_SHIFT;
     uint8_t vector = data & MSI_DATA_VECTOR_MASK;
+    struct arch_irq_remapping_request request;
+
+    irq_request_msi_fill(&request, 0, addr, data);
+    if ( viommu_check_irq_remapping(d, &request) )
+        return viommu_handle_irq_request(d, &request);
 
     if ( !vector )
     {

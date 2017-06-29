@@ -31,6 +31,7 @@
 #include <xen/errno.h>
 #include <xen/sched.h>
 #include <xen/irq.h>
+#include <xen/viommu.h>
 #include <public/hvm/ioreq.h>
 #include <asm/hvm/io.h>
 #include <asm/hvm/vpic.h>
@@ -39,6 +40,7 @@
 #include <asm/current.h>
 #include <asm/event.h>
 #include <asm/io_apic.h>
+#include <asm/viommu.h>
 
 static void vmsi_inj_irq(
     struct vlapic *target,
@@ -115,7 +117,17 @@ void vmsi_deliver_pirq(struct domain *d, const struct hvm_pirq_dpci *pirq_dpci)
 
     ASSERT(pirq_dpci->flags & HVM_IRQ_DPCI_GUEST_MSI);
 
-    vmsi_deliver(d, vector, dest, dest_mode, delivery_mode, trig_mode);
+    if ( pirq_dpci->flags & HVM_IRQ_DPCI_GUEST_REMAPPED )
+    {
+        struct arch_irq_remapping_request request;
+
+        irq_request_msi_fill(&request, pirq_dpci->gmsi.intremap.source_id,
+                             pirq_dpci->gmsi.intremap.addr,
+                             pirq_dpci->gmsi.intremap.data);
+        viommu_handle_irq_request(d, &request);
+    }
+    else
+        vmsi_deliver(d, vector, dest, dest_mode, delivery_mode, trig_mode);
 }
 
 /* Return value, -1 : multi-dests, non-negative value: dest_vcpu_id */
