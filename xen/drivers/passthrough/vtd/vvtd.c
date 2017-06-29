@@ -516,6 +516,26 @@ static int vvtd_handle_irq_request(struct domain *d,
                          irte.remap.tm);
 }
 
+static int vvtd_get_irq_info(struct domain *d,
+                             struct arch_irq_remapping_request *irq,
+                             struct arch_irq_remapping_info *info)
+{
+    int ret;
+    struct iremap_entry irte;
+    struct vvtd *vvtd = domain_vvtd(d);
+
+    ret = vvtd_get_entry(vvtd, irq, &irte, false);
+    if ( ret )
+        return ret;
+
+    info->vector = irte.remap.vector;
+    info->dest = irte_dest(vvtd, irte.remap.dst);
+    info->dest_mode = irte.remap.dm;
+    info->delivery_mode = irte.remap.dlm;
+
+    return 0;
+}
+
 static void vvtd_reset(struct vvtd *vvtd, uint64_t capability)
 {
     uint64_t cap = cap_set_num_fault_regs(1ULL) |
@@ -586,7 +606,8 @@ static int vvtd_destroy(struct viommu *viommu)
 struct viommu_ops vvtd_hvm_vmx_ops = {
     .create = vvtd_create,
     .destroy = vvtd_destroy,
-    .handle_irq_request = vvtd_handle_irq_request
+    .handle_irq_request = vvtd_handle_irq_request,
+    .get_irq_info = vvtd_get_irq_info
 };
 
 static int vvtd_register(void)
