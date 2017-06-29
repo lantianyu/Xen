@@ -17,6 +17,7 @@
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <xen/domctl.h>
 #include <xen/hvm/e820.h>
 #include <xen/hvm/params.h>
 
@@ -29,6 +30,9 @@
 #include "xl_parse.h"
 
 extern void set_default_nic_values(libxl_device_nic *nic);
+
+#define VIOMMU_VTD_BASE_ADDR        0xfed90000ULL
+#define VIOMMU_VTD_REGISTER_LEN     0x1000ULL
 
 #define ARRAY_EXTEND_INIT__CORE(array,count,initfn,more)                \
     ({                                                                  \
@@ -804,6 +808,61 @@ int parse_usbdev_config(libxl_device_usbdev *usbdev, char *token)
     return 0;
 }
 
+/* Parses viommu data and adds info into viommu
+ * Returns 1 if the input doesn't form a valid viommu
+ * or parsed values are not correct. Successful parse returns 0 */
+static int parse_viommu_config(libxl_viommu_info *viommu, const char *info)
+{
+    char *ptr, *oparg, *saveptr = NULL, *buf = xstrdup(info);
+
+    ptr = strtok_r(buf, ",", &saveptr);
+    if (MATCH_OPTION("type", ptr, oparg)) {
+        if (!strcmp(oparg, "intel_vtd")) {
+            viommu->type = LIBXL_VIOMMU_TYPE_INTEL_VTD;
+        } else {
+            fprintf(stderr, "Invalid viommu type: %s\n", oparg);
+            return 1;
+        }
+    } else {
+        fprintf(stderr, "viommu type should be set first: %s\n", oparg);
+        return 1;
+    }
+
+    ptr = strtok_r(NULL, ",", &saveptr);
+    if (MATCH_OPTION("intremap", ptr, oparg)) {
+        libxl_defbool_set(&viommu->intremap, !!strtoul(oparg, NULL, 0));
+    }
+
+    if (viommu->type == LIBXL_VIOMMU_TYPE_INTEL_VTD) {
+        for (ptr = strtok_r(NULL, ",", &saveptr); ptr;
+             ptr = strtok_r(NULL, ",", &saveptr)) {
+            if (MATCH_OPTION("x2apic", ptr, oparg)) {
+                libxl_defbool_set(&viommu->u.intel_vtd.x2apic,
+                                  !!strtoul(oparg, NULL, 0));
+            } else {
+                fprintf(stderr, "Unknown string `%s' in viommu spec\n", ptr);
+                return 1;
+            }
+        }
+
+        if (libxl_defbool_is_default(viommu->intremap))
+            libxl_defbool_set(&viommu->intremap, true);
+
+        if (!libxl_defbool_val(viommu->intremap)) {
+            fprintf(stderr, "Cannot create one virtual VTD without intremap\n");
+            return 1;
+        }
+
+        /* Set default values to unexposed fields */
+        viommu->base_addr = VIOMMU_VTD_BASE_ADDR;
+        viommu->len = VIOMMU_VTD_REGISTER_LEN;
+
+        /* Set desired capbilities */
+        viommu->cap = VIOMMU_CAP_IRQ_REMAPPING;
+    }
+    return 0;
+}
+
 void parse_config_data(const char *config_source,
                        const char *config_data,
                        int config_len,
@@ -1036,6 +1095,13 @@ void parse_config_data(const char *config_source,
 
     xlu_cfg_get_defbool(config, "driver_domain", &c_info->driver_domain, 0);
     xlu_cfg_get_defbool(config, "acpi", &b_info->acpi, 0);
+
+    if (!xlu_cfg_get_string(config, "viommu", &buf, 0)) {
+        if (parse_viommu_config(&b_info->viommu, buf)) {
+            fprintf(stderr, "ERROR: invalid viommu setting\n");
+            exit (1);
+        }
+    }
 
     switch(b_info->type) {
     case LIBXL_DOMAIN_TYPE_HVM:

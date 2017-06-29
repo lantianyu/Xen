@@ -1545,7 +1545,39 @@ Do not provide a VM generation ID.
 See also "Virtual Machine Generation ID" by Microsoft:
 L<http://www.microsoft.com/en-us/download/details.aspx?id=30707>
 
-=back 
+=back
+
+=item B<viommu="VIOMMU_STRING">
+
+Specifies the vIOMMU which are to be provided to the guest.
+
+B<VIOMMU_STRING> has the form C<KEY=VALUE,KEY=VALUE,...> where:
+
+=over 4
+
+=item B<KEY=VALUE>
+
+Possible B<KEY>s are:
+
+=over 4
+
+=item B<type="STRING">
+
+Currently there is only one valid type:
+
+(x86 only) "intel_vtd" means providing a emulated Intel VT-d to the guest.
+
+=item B<intremap=BOOLEAN>
+
+Specifies whether the vIOMMU should support interrupt remapping
+and default 'true'.
+
+=item B<x2apic=BOOLEAN>
+
+Specifies whether the vIOMMU should support x2apic mode and default 'true'.
+Only valid for "intel_vtd".
+
+=back
 
 =head3 Guest Virtual Time Controls
 
