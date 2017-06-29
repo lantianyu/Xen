@@ -41,6 +41,7 @@
 #include <xsm/xsm.h>
 #include <xen/trace.h>
 #include <xen/tmem.h>
+#include <xen/viommu.h>
 #include <asm/setup.h>
 
 /* Linux config option: propageted to domain0 */
@@ -813,6 +814,8 @@ static void complete_domain_destroy(struct rcu_head *head)
     rangeset_domain_destroy(d);
 
     sched_destroy_domain(d);
+
+    viommu_destroy_domain(d);
 
     /* Free page used by xen oprofile buffer. */
 #ifdef CONFIG_XENOPROF
