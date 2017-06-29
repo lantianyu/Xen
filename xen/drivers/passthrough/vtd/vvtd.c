@@ -46,6 +46,13 @@ struct vvtd {
     uint64_t length;
     /* Point back to the owner domain */
     struct domain *domain;
+    /* Is in Extended Interrupt Mode? */
+    bool eim;
+    /* Max remapping entries in IRT */
+    int irt_max_entry;
+    /* Interrupt remapping table base gfn */
+    uint64_t irt;
+
     struct hvm_hw_vvtd_regs *regs;
     struct page_info *regs_page;
 };
@@ -82,6 +89,11 @@ static inline struct vvtd *vcpu_vvtd(struct vcpu *v)
     return domain_vvtd(v->domain);
 }
 
+static inline void __vvtd_set_bit(struct vvtd *vvtd, uint32_t reg, int nr)
+{
+    return __set_bit(nr, (uint32_t *)&vvtd->regs->data[reg]);
+}
+
 static inline void vvtd_set_reg(struct vvtd *vtd, uint32_t reg,
                                 uint32_t value)
 {
@@ -107,6 +119,44 @@ static inline uint8_t vvtd_get_reg_byte(struct vvtd *vtd, uint32_t reg)
     vvtd_set_reg(vvtd, reg, (val));             \
     vvtd_set_reg(vvtd, (reg) + 4, (val) >> 32); \
 } while(0)
+
+static int vvtd_handle_gcmd_sirtp(struct vvtd *vvtd, uint32_t val)
+{
+    uint64_t irta;
+
+    if ( !(val & DMA_GCMD_SIRTP) )
+        return X86EMUL_OKAY;
+
+    vvtd_get_reg_quad(vvtd, DMAR_IRTA_REG, irta);
+    vvtd->irt = DMA_IRTA_ADDR(irta) >> PAGE_SHIFT;
+    vvtd->irt_max_entry = DMA_IRTA_SIZE(irta);
+    vvtd->eim = DMA_IRTA_EIME(irta);
+    VVTD_DEBUG(VVTD_DBG_RW, "Update IR info (addr=%lx eim=%d size=%d).",
+               vvtd->irt, vvtd->eim, vvtd->irt_max_entry);
+    __vvtd_set_bit(vvtd, DMAR_GSTS_REG, DMA_GSTS_SIRTPS_BIT);
+
+    return X86EMUL_OKAY;
+}
+
+static int vvtd_write_gcmd(struct vvtd *vvtd, uint32_t val)
+{
+    uint32_t orig = vvtd_get_reg(vvtd, DMAR_GSTS_REG);
+    uint32_t changed;
+
+    orig = orig & 0x96ffffff;    /* reset the one-shot bits */
+    changed = orig ^ val;
+
+    if ( !changed )
+        return X86EMUL_OKAY;
+    if ( (changed & (changed - 1)) )
+        VVTD_DEBUG(VVTD_DBG_RW, "Guest attempts to update multiple fields "
+                     "of GCMD_REG in one write transation.");
+
+    if ( changed & DMA_GCMD_SIRTP )
+        vvtd_handle_gcmd_sirtp(vvtd, val);
+
+    return X86EMUL_OKAY;
+}
 
 static int vvtd_range(struct vcpu *v, unsigned long addr)
 {
@@ -165,17 +215,37 @@ static int vvtd_write(struct vcpu *v, unsigned long addr,
     {
         switch ( offset_aligned )
         {
+        case DMAR_GCMD_REG:
+            ret = vvtd_write_gcmd(vvtd, val);
+            break;
+
         case DMAR_IEDATA_REG:
         case DMAR_IEADDR_REG:
         case DMAR_IEUADDR_REG:
         case DMAR_FEDATA_REG:
         case DMAR_FEADDR_REG:
         case DMAR_FEUADDR_REG:
+        case DMAR_IRTA_REG:
+        case DMAR_IRTA_REG_HI:
             vvtd_set_reg(vvtd, offset_aligned, val);
             ret = X86EMUL_OKAY;
             break;
 
         default:
+            break;
+        }
+    }
+    else /* len == 8 */
+    {
+        switch ( offset_aligned )
+        {
+        case DMAR_IRTA_REG:
+            vvtd_set_reg_quad(vvtd, DMAR_IRTA_REG, val);
+            ret = X86EMUL_OKAY;
+            break;
+
+        default:
+            ret = X86EMUL_UNHANDLEABLE;
             break;
         }
     }
@@ -235,6 +305,9 @@ static int vvtd_create(struct domain *d, struct viommu *viommu)
     vvtd->length = viommu->length;
     vvtd->domain = d;
     vvtd->status = VIOMMU_STATUS_DEFAULT;
+    vvtd->eim = 0;
+    vvtd->irt = 0;
+    vvtd->irt_max_entry = 0;
     register_mmio_handler(d, &vvtd_mmio_ops);
     return 0;
 
