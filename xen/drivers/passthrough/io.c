@@ -942,21 +942,20 @@ static void __msi_pirq_eoi(struct hvm_pirq_dpci *pirq_dpci)
 static int _hvm_dpci_msi_eoi(struct domain *d,
                              struct hvm_pirq_dpci *pirq_dpci, void *arg)
 {
-    int vector = (long)arg;
+    uint8_t vector, dlm, vector_target = (long)arg;
+    uint32_t dest;
+    bool dm;
 
-    if ( (pirq_dpci->flags & HVM_IRQ_DPCI_MACH_MSI) &&
-         (pirq_dpci->gmsi.legacy.gvec == vector) )
+    if ( pirq_dpci->flags & HVM_IRQ_DPCI_MACH_MSI )
     {
-        unsigned int dest = MASK_EXTR(pirq_dpci->gmsi.legacy.gflags,
-                                      XEN_DOMCTL_VMSI_X86_DEST_ID_MASK);
-        bool dest_mode = pirq_dpci->gmsi.legacy.gflags &
-                         XEN_DOMCTL_VMSI_X86_DM_MASK;
+        if ( pirq_dpci_2_msi_attr(d, pirq_dpci, &vector, &dest, &dm, &dlm) )
+            return 0;
 
-        if ( vlapic_match_dest(vcpu_vlapic(current), NULL, 0, dest,
-                               dest_mode) )
+        if ( vector == vector_target &&
+             vlapic_match_dest(vcpu_vlapic(current), NULL, 0, dest, dm) )
         {
-            __msi_pirq_eoi(pirq_dpci);
-            return 1;
+                __msi_pirq_eoi(pirq_dpci);
+                return 1;
         }
     }
 
