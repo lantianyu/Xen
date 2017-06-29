@@ -341,8 +341,36 @@ int libxl__arch_domain_create(libxl__gc *gc, libxl_domain_config *d_config,
     if (d_config->b_info.type == LIBXL_DOMAIN_TYPE_HVM) {
         unsigned long shadow = DIV_ROUNDUP(d_config->b_info.shadow_memkb,
                                            1024);
+        libxl_viommu_info *viommu = &d_config->b_info.viommu;
+
         xc_shadow_control(ctx->xch, domid, XEN_DOMCTL_SHADOW_OP_SET_ALLOCATION,
                           NULL, 0, &shadow, 0, NULL);
+
+        /* Check supported capbilities and create viommu */
+        if (viommu->type) {
+            uint32_t id;
+            uint64_t cap;
+
+            if (xc_viommu_query_cap(ctx->xch, domid, viommu->type, &cap)) {
+                LOGED(ERROR, domid, "failed to query vIOMMU's capabilities");
+                ret = ERROR_FAIL;
+                goto out;
+            }
+
+            if ((cap & viommu->cap) != viommu->cap) {
+                LOGED(ERROR, domid, "vIOMMU: Unsupported cap %"PRIu64, cap);
+                ret = ERROR_FAIL;
+                goto out;
+            }
+
+            ret = xc_viommu_create(ctx->xch, domid, viommu->type,
+                      viommu->base_addr, viommu->len, viommu->cap, &id);
+            if (ret) {
+                LOGED(ERROR, domid, "create vIOMMU fail");
+                ret = ERROR_FAIL;
+                goto out;
+            }
+        }
     }
 
     if (d_config->c_info.type == LIBXL_DOMAIN_TYPE_PV &&
