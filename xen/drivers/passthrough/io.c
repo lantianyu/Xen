@@ -21,9 +21,11 @@
 #include <xen/iommu.h>
 #include <xen/cpu.h>
 #include <xen/irq.h>
+#include <xen/viommu.h>
 #include <asm/hvm/irq.h>
 #include <asm/hvm/support.h>
 #include <asm/io_apic.h>
+#include <asm/viommu.h>
 
 static DEFINE_PER_CPU(struct list_head, dpci_list);
 
@@ -275,6 +277,106 @@ static struct vcpu *vector_hashing_dest(const struct domain *d,
     return dest;
 }
 
+static void set_hvm_gmsi_info(struct hvm_gmsi_info *msi,
+                              xen_domctl_bind_pt_irq_t *pt_irq_bind)
+{
+    switch (pt_irq_bind->irq_type)
+    {
+    case PT_IRQ_TYPE_MSI:
+        msi->legacy.gvec = pt_irq_bind->u.msi.gvec;
+        msi->legacy.gflags = pt_irq_bind->u.msi.gflags;
+        break;
+
+    case PT_IRQ_TYPE_MSI_IR:
+        msi->intremap.source_id = pt_irq_bind->u.msi_ir.source_id;
+        msi->intremap.data = pt_irq_bind->u.msi_ir.data;
+        msi->intremap.addr = pt_irq_bind->u.msi_ir.addr;
+        break;
+
+    default:
+        ASSERT_UNREACHABLE();
+    }
+}
+
+static void clear_hvm_gmsi_info(struct hvm_gmsi_info *msi, int irq_type)
+{
+    switch (irq_type)
+    {
+    case PT_IRQ_TYPE_MSI:
+        msi->legacy.gvec = 0;
+        msi->legacy.gflags = 0;
+        break;
+
+    case PT_IRQ_TYPE_MSI_IR:
+        msi->intremap.source_id = 0;
+        msi->intremap.data = 0;
+        msi->intremap.addr = 0;
+        break;
+
+    default:
+        ASSERT_UNREACHABLE();
+    }
+}
+
+static bool hvm_gmsi_info_need_update(struct hvm_gmsi_info *msi,
+                                      xen_domctl_bind_pt_irq_t *pt_irq_bind)
+{
+    switch (pt_irq_bind->irq_type)
+    {
+    case PT_IRQ_TYPE_MSI:
+        return ((msi->legacy.gvec != pt_irq_bind->u.msi.gvec) ||
+                (msi->legacy.gflags != pt_irq_bind->u.msi.gflags));
+
+    case PT_IRQ_TYPE_MSI_IR:
+        return ((msi->intremap.source_id != pt_irq_bind->u.msi_ir.source_id) ||
+                (msi->intremap.data != pt_irq_bind->u.msi_ir.data) ||
+                (msi->intremap.addr != pt_irq_bind->u.msi_ir.addr));
+
+    default:
+        ASSERT_UNREACHABLE();
+    }
+
+    return 0;
+}
+
+static int pirq_dpci_2_msi_attr(struct domain *d,
+                                struct hvm_pirq_dpci *pirq_dpci, uint8_t *gvec,
+                                uint32_t *dest, bool *dm, uint8_t *dlm)
+{
+    int rc = 0;
+
+    if ( pirq_dpci->flags & HVM_IRQ_DPCI_GUEST_REMAPPED )
+    {
+        struct arch_irq_remapping_request request;
+        struct arch_irq_remapping_info irq_info;
+
+        irq_request_msi_fill(&request, pirq_dpci->gmsi.intremap.source_id,
+                             pirq_dpci->gmsi.intremap.addr,
+                             pirq_dpci->gmsi.intremap.data);
+        rc = viommu_get_irq_info(d, &request, &irq_info);
+        if ( rc )
+            return rc;
+
+        *gvec = irq_info.vector;
+        *dest = irq_info.dest;
+        *dm = irq_info.dest_mode;
+        *dlm = irq_info.delivery_mode;
+    }
+    else if ( pirq_dpci->flags & HVM_IRQ_DPCI_GUEST_MSI )
+    {
+        *gvec = pirq_dpci->gmsi.legacy.gvec;
+        *dest = MASK_EXTR(pirq_dpci->gmsi.legacy.gflags,
+                          XEN_DOMCTL_VMSI_X86_DEST_ID_MASK);
+        *dm = pirq_dpci->gmsi.legacy.gflags & XEN_DOMCTL_VMSI_X86_DM_MASK;
+        *dlm = MASK_EXTR(pirq_dpci->gmsi.legacy.gflags,
+                         XEN_DOMCTL_VMSI_X86_DELIV_MASK);
+    }
+    else
+        ASSERT_UNREACHABLE();
+
+    return rc;
+}
+
 int pt_irq_create_bind(
     struct domain *d, xen_domctl_bind_pt_irq_t *pt_irq_bind)
 {
@@ -338,20 +440,24 @@ int pt_irq_create_bind(
     switch ( pt_irq_bind->irq_type )
     {
     case PT_IRQ_TYPE_MSI:
+    case PT_IRQ_TYPE_MSI_IR:
     {
-        uint8_t dest, delivery_mode;
+        uint8_t delivery_mode, gvec;
+        uint32_t dest;
         bool dest_mode;
         int dest_vcpu_id;
         const struct vcpu *vcpu;
-        uint32_t gflags = pt_irq_bind->u.msi.gflags &
-                          ~XEN_DOMCTL_VMSI_X86_UNMASKED;
+        bool ir = (pt_irq_bind->irq_type == PT_IRQ_TYPE_MSI_IR);
+        uint64_t gtable = ir ? pt_irq_bind->u.msi_ir.gtable :
+                          pt_irq_bind->u.msi.gtable;
 
         if ( !(pirq_dpci->flags & HVM_IRQ_DPCI_MAPPED) )
         {
             pirq_dpci->flags = HVM_IRQ_DPCI_MAPPED | HVM_IRQ_DPCI_MACH_MSI |
                                HVM_IRQ_DPCI_GUEST_MSI;
-            pirq_dpci->gmsi.legacy.gvec = pt_irq_bind->u.msi.gvec;
-            pirq_dpci->gmsi.legacy.gflags = gflags;
+            if ( ir )
+                pirq_dpci->flags |= HVM_IRQ_DPCI_GUEST_REMAPPED;
+            set_hvm_gmsi_info(&pirq_dpci->gmsi, pt_irq_bind);
             /*
              * 'pt_irq_create_bind' can be called after 'pt_irq_destroy_bind'.
              * The 'pirq_cleanup_check' which would free the structure is only
@@ -366,9 +472,9 @@ int pt_irq_create_bind(
             pirq_dpci->dom = d;
             /* bind after hvm_irq_dpci is setup to avoid race with irq handler*/
             rc = pirq_guest_bind(d->vcpu[0], info, 0);
-            if ( rc == 0 && pt_irq_bind->u.msi.gtable )
+            if ( rc == 0 && gtable )
             {
-                rc = msixtbl_pt_register(d, info, pt_irq_bind->u.msi.gtable);
+                rc = msixtbl_pt_register(d, info, gtable);
                 if ( unlikely(rc) )
                 {
                     pirq_guest_unbind(d, info);
@@ -383,8 +489,7 @@ int pt_irq_create_bind(
             }
             if ( unlikely(rc) )
             {
-                pirq_dpci->gmsi.legacy.gflags = 0;
-                pirq_dpci->gmsi.legacy.gvec = 0;
+                clear_hvm_gmsi_info(&pirq_dpci->gmsi, pt_irq_bind->irq_type);
                 pirq_dpci->dom = NULL;
                 pirq_dpci->flags = 0;
                 pirq_cleanup_check(info, d);
@@ -396,6 +501,9 @@ int pt_irq_create_bind(
         {
             uint32_t mask = HVM_IRQ_DPCI_MACH_MSI | HVM_IRQ_DPCI_GUEST_MSI;
 
+            if ( ir )
+                mask |= HVM_IRQ_DPCI_GUEST_REMAPPED;
+
             if ( (pirq_dpci->flags & mask) != mask )
             {
                 spin_unlock(&d->event_lock);
@@ -403,31 +511,30 @@ int pt_irq_create_bind(
             }
 
             /* If pirq is already mapped as vmsi, update guest data/addr. */
-            if ( pirq_dpci->gmsi.legacy.gvec != pt_irq_bind->u.msi.gvec ||
-                 pirq_dpci->gmsi.legacy.gflags != gflags )
+            if ( hvm_gmsi_info_need_update(&pirq_dpci->gmsi, pt_irq_bind) )
             {
                 /* Directly clear pending EOIs before enabling new MSI info. */
                 pirq_guest_eoi(info);
 
-        }
-                pirq_dpci->gmsi.legacy.gvec = pt_irq_bind->u.msi.gvec;
-                pirq_dpci->gmsi.legacy.gflags = gflags;
+                set_hvm_gmsi_info(&pirq_dpci->gmsi, pt_irq_bind);
             }
         }
         /* Calculate dest_vcpu_id for MSI-type pirq migration. */
-        dest = MASK_EXTR(pirq_dpci->gmsi.legacy.gflags,
-                         XEN_DOMCTL_VMSI_X86_DEST_ID_MASK);
-        dest_mode = pirq_dpci->gmsi.legacy.gflags & XEN_DOMCTL_VMSI_X86_DM_MASK;
-        delivery_mode = MASK_EXTR(pirq_dpci->gmsi.legacy.gflags,
-                                  XEN_DOMCTL_VMSI_X86_DELIV_MASK);
-
+        rc = pirq_dpci_2_msi_attr(d, pirq_dpci, &gvec, &dest, &dest_mode,
+                                  &delivery_mode);
+        if ( unlikely(rc) )
+        {
+            spin_unlock(&d->event_lock);
+            return rc;
+        }
         dest_vcpu_id = hvm_girq_dest_2_vcpu_id(d, dest, dest_mode);
         pirq_dpci->gmsi.dest_vcpu_id = dest_vcpu_id;
         spin_unlock(&d->event_lock);
 
         pirq_dpci->gmsi.posted = false;
         vcpu = (dest_vcpu_id >= 0) ? d->vcpu[dest_vcpu_id] : NULL;
-        if ( iommu_intpost )
+        /* FIXME: won't use interrupt posting for guest's remapping MSIs */
+        if ( iommu_intpost && !ir )
         {
             if ( delivery_mode == dest_LowestPrio )
                 vcpu = vector_hashing_dest(d, dest, dest_mode,
@@ -439,7 +546,7 @@ int pt_irq_create_bind(
             hvm_migrate_pirqs(d->vcpu[dest_vcpu_id]);
 
         /* Use interrupt posting if it is supported. */
-        if ( iommu_intpost )
+        if ( iommu_intpost && !ir )
             pi_update_irte(vcpu ? &vcpu->arch.hvm_vmx.pi_desc : NULL,
                            info, pirq_dpci->gmsi.legacy.gvec);
 
@@ -646,6 +753,7 @@ int pt_irq_destroy_bind(
         }
         break;
     case PT_IRQ_TYPE_MSI:
+    case PT_IRQ_TYPE_MSI_IR:
         break;
     default:
         return -EOPNOTSUPP;
@@ -664,7 +772,8 @@ int pt_irq_destroy_bind(
     pirq = pirq_info(d, machine_gsi);
     pirq_dpci = pirq_dpci(pirq);
 
-    if ( hvm_irq_dpci && pt_irq_bind->irq_type != PT_IRQ_TYPE_MSI )
+    if ( hvm_irq_dpci && pt_irq_bind->irq_type != PT_IRQ_TYPE_MSI &&
+         pt_irq_bind->irq_type != PT_IRQ_TYPE_MSI_IR )
     {
         unsigned int bus = pt_irq_bind->u.pci.bus;
         unsigned int device = pt_irq_bind->u.pci.device;

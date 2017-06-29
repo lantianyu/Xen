@@ -121,6 +121,7 @@ struct dev_intx_gsi_link {
 #define _HVM_IRQ_DPCI_GUEST_PCI_SHIFT           4
 #define _HVM_IRQ_DPCI_GUEST_MSI_SHIFT           5
 #define _HVM_IRQ_DPCI_IDENTITY_GSI_SHIFT        6
+#define _HVM_IRQ_DPCI_GUEST_REMAPPED_SHIFT      7
 #define _HVM_IRQ_DPCI_TRANSLATE_SHIFT          15
 #define HVM_IRQ_DPCI_MACH_PCI        (1u << _HVM_IRQ_DPCI_MACH_PCI_SHIFT)
 #define HVM_IRQ_DPCI_MACH_MSI        (1u << _HVM_IRQ_DPCI_MACH_MSI_SHIFT)
@@ -128,6 +129,7 @@ struct dev_intx_gsi_link {
 #define HVM_IRQ_DPCI_EOI_LATCH       (1u << _HVM_IRQ_DPCI_EOI_LATCH_SHIFT)
 #define HVM_IRQ_DPCI_GUEST_PCI       (1u << _HVM_IRQ_DPCI_GUEST_PCI_SHIFT)
 #define HVM_IRQ_DPCI_GUEST_MSI       (1u << _HVM_IRQ_DPCI_GUEST_MSI_SHIFT)
+#define HVM_IRQ_DPCI_GUEST_REMAPPED  (1u << _HVM_IRQ_DPCI_GUEST_REMAPPED_SHIFT)
 #define HVM_IRQ_DPCI_IDENTITY_GSI    (1u << _HVM_IRQ_DPCI_IDENTITY_GSI_SHIFT)
 #define HVM_IRQ_DPCI_TRANSLATE       (1u << _HVM_IRQ_DPCI_TRANSLATE_SHIFT)
 
@@ -137,6 +139,11 @@ struct hvm_gmsi_info {
             uint32_t gvec;
             uint32_t gflags;
         } legacy;
+        struct {
+            uint32_t source_id;
+            uint32_t data;
+            uint64_t addr;
+        } intremap;
     };
     int dest_vcpu_id; /* -1 :multi-dest, non-negative: dest_vcpu_id */
     bool posted; /* directly deliver to guest via VT-d PI? */
