@@ -381,8 +381,7 @@ int libxl__arch_domain_finalise_hw_description(libxl__gc *gc,
 {
     int rc = 0;
 
-    if ((info->type == LIBXL_DOMAIN_TYPE_HVM) &&
-        (info->device_model_version == LIBXL_DEVICE_MODEL_VERSION_NONE)) {
+    if (info->type == LIBXL_DOMAIN_TYPE_HVM) {
         rc = libxl__dom_load_acpi(gc, info, dom);
         if (rc != 0)
             LOGE(ERROR, "libxl_dom_load_acpi failed");
