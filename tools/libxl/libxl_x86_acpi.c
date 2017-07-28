@@ -16,6 +16,7 @@
 #include "libxl_arch.h"
 #include <xen/hvm/hvm_info_table.h>
 #include <xen/hvm/e820.h>
+#include "libacpi/acpi2_0.h"
 #include "libacpi/libacpi.h"
 
 #include <xc_dom.h>
@@ -234,6 +235,53 @@ int libxl__dom_load_acpi(libxl__gc *gc,
 
 out:
     return rc;
+}
+
+static void *acpi_memalign(struct acpi_ctxt *ctxt, uint32_t size,
+                           uint32_t align)
+{
+    int ret;
+    void *ptr;
+
+    ret = posix_memalign(&ptr, align, size);
+    if (ret != 0 || !ptr)
+        return NULL;
+
+    return ptr;
+}
+
+int libxl__dom_build_dmar(libxl__gc *gc,
+                          const libxl_domain_build_info *b_info,
+                          struct xc_dom_image *dom,
+                          void **data, int *len)
+{
+    struct acpi_config config = { 0 };
+    struct acpi_ctxt ctxt;
+    void *table;
+
+    if ((b_info->type != LIBXL_DOMAIN_TYPE_HVM) ||
+        (b_info->device_model_version == LIBXL_DEVICE_MODEL_VERSION_NONE) ||
+        (b_info->viommu.type != LIBXL_VIOMMU_TYPE_INTEL_VTD))
+        return 0;
+
+    ctxt.mem_ops.alloc = acpi_memalign;
+    ctxt.mem_ops.v2p = virt_to_phys;
+    ctxt.mem_ops.free = acpi_mem_free;
+
+    if (libxl_defbool_val(b_info->viommu.intremap))
+        config.iommu_intremap_supported = true;
+    if (libxl_defbool_val(b_info->viommu.u.intel_vtd.x2apic))
+        config.iommu_x2apic_supported = true;
+    config.iommu_base_addr = b_info->viommu.base_addr;
+
+    config.ioapic_id = 1; /* the IOAPIC_ID used by HVM */
+
+    table = construct_dmar(&ctxt, &config);
+    if ( !table )
+        return ERROR_NOMEM;
+    *data = table;
+    *len = ((struct acpi_header *)table)->length;
+    return 0;
 }
 
 /*

@@ -78,6 +78,11 @@ int libxl__arch_extra_memory(libxl__gc *gc,
 int libxl__dom_load_acpi(libxl__gc *gc,
                          const libxl_domain_build_info *b_info,
                          struct xc_dom_image *dom);
+
+int libxl__dom_build_dmar(libxl__gc *gc,
+                          const libxl_domain_build_info *b_info,
+                          struct xc_dom_image *dom,
+                          void **data, int *len);
 #endif
 
 #endif

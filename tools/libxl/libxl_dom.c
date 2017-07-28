@@ -1060,6 +1060,42 @@ static int libxl__domain_firmware(libxl__gc *gc,
         }
     }
 
+    /*
+     * If a guest has one virtual VTD, build DMAR table for it and joint this
+     * table with existing content in acpi_modules in order to employ HVM
+     * firmware pass-through mechanism to pass-through DMAR table.
+     */
+    if (info->viommu.type == LIBXL_VIOMMU_TYPE_INTEL_VTD) {
+        datalen = 0;
+        e = libxl__dom_build_dmar(gc, info, dom, &data, &datalen);
+        if (e) {
+            LOGEV(ERROR, e, "failed to build DMAR table");
+            rc = ERROR_FAIL;
+            goto out;
+        }
+        if (datalen) {
+            libxl__ptr_add(gc, data);
+            if (!dom->acpi_modules[0].data) {
+                dom->acpi_modules[0].data = data;
+                dom->acpi_modules[0].length = (uint32_t)datalen;
+            } else {
+                /* joint tables */
+                void *newdata;
+                newdata = malloc(datalen + dom->acpi_modules[0].length);
+                if (!newdata) {
+                    LOGE(ERROR, "failed to joint DMAR table to acpi modules");
+                    rc = ERROR_FAIL;
+                    goto out;
+                }
+                memcpy(newdata, dom->acpi_modules[0].data,
+                       dom->acpi_modules[0].length);
+                memcpy(newdata + dom->acpi_modules[0].length, data, datalen);
+                dom->acpi_modules[0].data = newdata;
+                dom->acpi_modules[0].length += (uint32_t)datalen;
+            }
+        }
+    }
+
     return 0;
 out:
     assert(rc != 0);
