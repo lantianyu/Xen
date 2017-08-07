@@ -148,6 +148,49 @@ static u64 viommu_query_caps(struct domain *d, u64 type)
     return viommu_type->ops->query_caps(d);
 }
 
+int viommu_domctl(struct domain *d, struct xen_domctl_viommu_op *op,
+                  bool *need_copy)
+{
+    int rc = -EINVAL, ret;
+
+    if ( !viommu_enabled() )
+        return rc;
+
+    switch ( op->cmd )
+    {
+    case XEN_DOMCTL_create_viommu:
+        ret = viommu_create(d, op->u.create_viommu.viommu_type,
+            op->u.create_viommu.base_address,
+            op->u.create_viommu.length,
+            op->u.create_viommu.capabilities);
+        if ( ret >= 0 ) {
+            op->u.create_viommu.viommu_id = ret;
+            *need_copy = true;
+            rc = 0; /* return 0 if success */
+        }
+        break;
+
+    case XEN_DOMCTL_destroy_viommu:
+        rc = viommu_destroy(d, op->u.destroy_viommu.viommu_id);
+        break;
+
+    case XEN_DOMCTL_query_viommu_caps:
+        ret = viommu_query_caps(d, op->u.query_caps.viommu_type);
+        if ( ret >= 0 )
+        {
+            op->u.query_caps.capabilities = ret;
+            rc = 0;
+        }
+        *need_copy = true;
+        break;
+
+    default:
+        break;
+    }
+
+    return rc;
+}
+
 int __init viommu_setup(void)
 {
     INIT_LIST_HEAD(&type_list);
