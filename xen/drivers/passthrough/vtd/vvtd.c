@@ -23,11 +23,17 @@
 #include <xen/types.h>
 #include <xen/viommu.h>
 #include <xen/xmalloc.h>
+#include <asm/apic.h>
 #include <asm/current.h>
+#include <asm/event.h>
 #include <asm/hvm/domain.h>
+#include <asm/io_apic.h>
 #include <asm/page.h>
+#include <asm/p2m.h>
+#include <asm/viommu.h>
 
 #include "iommu.h"
+#include "vtd.h"
 
 /* Supported capabilities by vvtd */
 unsigned int vvtd_caps = VIOMMU_CAP_IRQ_REMAPPING;
@@ -109,6 +115,132 @@ static inline void vvtd_set_reg_quad(struct vvtd *vtd, uint32_t reg,
 static inline uint64_t vvtd_get_reg_quad(struct vvtd *vtd, uint32_t reg)
 {
     return vtd->regs->data64[reg/sizeof(uint64_t)];
+}
+
+static void* map_guest_page(struct domain *d, uint64_t gfn)
+{
+    struct page_info *p;
+    void *ret;
+
+    p = get_page_from_gfn(d, gfn, NULL, P2M_ALLOC);
+    if ( !p )
+        return ERR_PTR(-EINVAL);
+
+    if ( !get_page_type(p, PGT_writable_page) )
+    {
+        put_page(p);
+        return ERR_PTR(-EINVAL);
+    }
+
+    ret = __map_domain_page_global(p);
+    if ( !ret )
+    {
+        put_page_and_type(p);
+        return ERR_PTR(-ENOMEM);
+    }
+
+    return ret;
+}
+
+static void unmap_guest_page(void *virt)
+{
+    struct page_info *page;
+
+    ASSERT((unsigned long)virt & PAGE_MASK);
+    page = mfn_to_page(domain_page_map_to_mfn(virt));
+
+    unmap_domain_page_global(virt);
+    put_page_and_type(page);
+}
+
+static void vvtd_inj_irq(struct vlapic *target, uint8_t vector,
+                         uint8_t trig_mode, uint8_t delivery_mode)
+{
+    vvtd_debug("dest=v%d, delivery_mode=%x vector=%d trig_mode=%d\n",
+               vlapic_vcpu(target)->vcpu_id, delivery_mode, vector, trig_mode);
+
+    ASSERT((delivery_mode == dest_Fixed) ||
+           (delivery_mode == dest_LowestPrio));
+
+    vlapic_set_irq(target, vector, trig_mode);
+}
+
+static int vvtd_delivery(struct domain *d, uint8_t vector,
+                         uint32_t dest, uint8_t dest_mode,
+                         uint8_t delivery_mode, uint8_t trig_mode)
+{
+    struct vlapic *target;
+    struct vcpu *v;
+
+    switch ( delivery_mode )
+    {
+    case dest_LowestPrio:
+        target = vlapic_lowest_prio(d, NULL, 0, dest, dest_mode);
+        if ( target != NULL )
+        {
+            vvtd_inj_irq(target, vector, trig_mode, delivery_mode);
+            break;
+        }
+        vvtd_debug("null round robin: vector=%02x\n", vector);
+        break;
+
+    case dest_Fixed:
+        for_each_vcpu ( d, v )
+            if ( vlapic_match_dest(vcpu_vlapic(v), NULL, 0, dest, dest_mode) )
+                vvtd_inj_irq(vcpu_vlapic(v), vector, trig_mode, delivery_mode);
+        break;
+
+    case dest_NMI:
+        for_each_vcpu ( d, v )
+            if ( vlapic_match_dest(vcpu_vlapic(v), NULL, 0, dest, dest_mode) &&
+                 !test_and_set_bool(v->nmi_pending) )
+                vcpu_kick(v);
+        break;
+
+    default:
+        gdprintk(XENLOG_WARNING, "Unsupported VTD delivery mode %d\n",
+                 delivery_mode);
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+static uint32_t irq_remapping_request_index(
+    const struct arch_irq_remapping_request *irq)
+{
+    if ( irq->type == VIOMMU_REQUEST_IRQ_MSI )
+    {
+        uint32_t index;
+        struct msi_msg_remap_entry msi_msg =
+        {
+            .address_lo = { .val = irq->msg.msi.addr },
+            .data = irq->msg.msi.data,
+        };
+
+        index = (msi_msg.address_lo.index_15 << 15) +
+                msi_msg.address_lo.index_0_14;
+        if ( msi_msg.address_lo.SHV )
+            index += (uint16_t)msi_msg.data;
+
+        return index;
+    }
+    else if ( irq->type == VIOMMU_REQUEST_IRQ_APIC )
+    {
+        struct IO_APIC_route_remap_entry remap_rte = { .val = irq->msg.rte };
+
+        return (remap_rte.index_15 << 15) + remap_rte.index_0_14;
+    }
+    ASSERT_UNREACHABLE();
+
+    return 0;
+}
+
+static inline uint32_t irte_dest(struct vvtd *vvtd, uint32_t dest)
+{
+    /* In xAPIC mode, only 8-bits([15:8]) are valid */
+    return vvtd->status.eim_enabled ? dest :
+           MASK_EXTR(dest, IRTE_xAPIC_DEST_MASK);
 }
 
 static void vvtd_handle_gcmd_ire(struct vvtd *vvtd, uint32_t val)
@@ -255,6 +387,135 @@ static const struct hvm_mmio_ops vvtd_mmio_ops = {
     .write = vvtd_write
 };
 
+static void vvtd_handle_fault(struct vvtd *vvtd,
+                              struct arch_irq_remapping_request *irq,
+                              struct iremap_entry *irte,
+                              unsigned int fault,
+                              bool record_fault)
+{
+   if ( !record_fault )
+        return;
+
+    switch ( fault )
+    {
+    case VTD_FR_IR_SID_ERR:
+    case VTD_FR_IR_IRTE_RSVD:
+    case VTD_FR_IR_ENTRY_P:
+        if ( qinval_fault_disable(*irte) )
+            break;
+    /* fall through */
+    case VTD_FR_IR_INDEX_OVER:
+    case VTD_FR_IR_ROOT_INVAL:
+        /* TODO: handle fault (e.g. record and report this fault to VM */
+        break;
+
+    default:
+        gdprintk(XENLOG_INFO, "Can't handle VT-d fault %x\n", fault);
+    }
+    return;
+}
+
+static bool vvtd_irq_request_sanity_check(const struct vvtd *vvtd,
+                                          struct arch_irq_remapping_request *irq)
+{
+    if ( irq->type == VIOMMU_REQUEST_IRQ_APIC )
+    {
+        struct IO_APIC_route_remap_entry rte = { .val = irq->msg.rte };
+
+        ASSERT(rte.format);
+        return !!rte.reserved;
+    }
+    else if ( irq->type == VIOMMU_REQUEST_IRQ_MSI )
+    {
+        struct msi_msg_remap_entry msi_msg =
+        { .address_lo = { .val = irq->msg.msi.addr } };
+
+        ASSERT(msi_msg.address_lo.format);
+        return 0;
+    }
+    ASSERT_UNREACHABLE();
+
+    return 0;
+}
+
+/*
+ * 'record_fault' is a flag to indicate whether we need recording a fault
+ * and notifying guest when a fault happens during fetching vIRTE.
+ */
+static int vvtd_get_entry(struct vvtd *vvtd,
+                          struct arch_irq_remapping_request *irq,
+                          struct iremap_entry *dest,
+                          bool record_fault)
+{
+    uint32_t entry = irq_remapping_request_index(irq);
+    struct iremap_entry  *irte, *irt_page;
+
+    vvtd_debug("interpret a request with index %x\n", entry);
+
+    if ( vvtd_irq_request_sanity_check(vvtd, irq) )
+    {
+        vvtd_handle_fault(vvtd, irq, NULL, VTD_FR_IR_REQ_RSVD, record_fault);
+        return -EINVAL;
+    }
+
+    if ( entry > vvtd->status.irt_max_entry )
+    {
+        vvtd_handle_fault(vvtd, irq, NULL, VTD_FR_IR_INDEX_OVER, record_fault);
+        return -EACCES;
+    }
+
+    irt_page = map_guest_page(vvtd->domain,
+                              vvtd->status.irt + (entry >> IREMAP_ENTRY_ORDER));
+    if ( IS_ERR(irt_page) )
+    {
+        vvtd_handle_fault(vvtd, irq, NULL, VTD_FR_IR_ROOT_INVAL, record_fault);
+        return PTR_ERR(irt_page);
+    }
+
+    irte = irt_page + (entry % (1 << IREMAP_ENTRY_ORDER));
+    dest->val = irte->val;
+    if ( !qinval_present(*irte) )
+    {
+        vvtd_handle_fault(vvtd, irq, NULL, VTD_FR_IR_ENTRY_P, record_fault);
+        unmap_guest_page(irt_page);
+        return -ENOENT;
+    }
+
+    /* Check reserved bits */
+    if ( (irte->remap.res_1 || irte->remap.res_2 || irte->remap.res_3 ||
+          irte->remap.res_4) )
+    {
+        vvtd_handle_fault(vvtd, irq, NULL, VTD_FR_IR_IRTE_RSVD, record_fault);
+        unmap_guest_page(irt_page);
+        return -EINVAL;
+    }
+
+    /* FIXME: We don't check against the source ID */
+    unmap_guest_page(irt_page);
+
+    return 0;
+}
+
+static int vvtd_handle_irq_request(struct domain *d,
+                                   struct arch_irq_remapping_request *irq)
+{
+    struct iremap_entry irte;
+    int ret;
+    struct vvtd *vvtd = domain_vvtd(d);
+
+    if ( !vvtd || !vvtd->status.intremap_enabled )
+        return -ENODEV;
+
+    ret = vvtd_get_entry(vvtd, irq, &irte, true);
+    if ( ret )
+        return ret;
+
+    return vvtd_delivery(vvtd->domain, irte.remap.vector,
+                         irte_dest(vvtd, irte.remap.dst),
+                         irte.remap.dm, irte.remap.dlm,
+                         irte.remap.tm);
+}
+
 static void vvtd_reset(struct vvtd *vvtd, uint64_t capability)
 {
     uint64_t cap = cap_set_num_fault_regs(1ULL) |
@@ -324,7 +585,8 @@ static int vvtd_destroy(struct viommu *viommu)
 
 struct viommu_ops vvtd_hvm_vmx_ops = {
     .create = vvtd_create,
-    .destroy = vvtd_destroy
+    .destroy = vvtd_destroy,
+    .handle_irq_request = vvtd_handle_irq_request
 };
 
 static int vvtd_register(void)
