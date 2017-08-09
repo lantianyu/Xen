@@ -28,31 +28,19 @@
 #include <asm/current.h>
 #include <asm/event.h>
 #include <asm/hvm/domain.h>
+#include <asm/hvm/save.h>
 #include <asm/hvm/support.h>
 #include <asm/io_apic.h>
 #include <asm/page.h>
 #include <asm/p2m.h>
 #include <asm/viommu.h>
+#include <public/hvm/save.h>
 
 #include "iommu.h"
 #include "vtd.h"
 
 /* Supported capabilities by vvtd */
 unsigned int vvtd_caps = VIOMMU_CAP_IRQ_REMAPPING;
-
-struct hvm_hw_vvtd_status {
-    uint32_t eim_enabled : 1,
-             intremap_enabled : 1;
-    uint32_t fault_index;
-    uint32_t irt_max_entry;
-    /* Interrupt remapping table base gfn */
-    uint64_t irt;
-};
-
-union hvm_hw_vvtd_regs {
-    uint32_t data32[256];
-    uint64_t data64[128];
-};
 
 struct vvtd {
     /* Address range of remapping hardware register-set */
@@ -1056,6 +1044,56 @@ static bool vvtd_is_remapping(struct domain *d,
 
     return 0;
 }
+
+static int vvtd_load(struct domain *d, hvm_domain_context_t *h)
+{
+    struct hvm_hw_vvtd *hw_vvtd;
+
+    if ( !domain_vvtd(d) )
+        return -ENODEV;
+
+    hw_vvtd = xmalloc(struct hvm_hw_vvtd);
+    if ( !hw_vvtd )
+        return -ENOMEM;
+
+    if ( hvm_load_entry(VVTD, h, hw_vvtd) )
+    {
+        xfree(hw_vvtd);
+        return -EINVAL;
+    }
+
+    memcpy(&domain_vvtd(d)->status, &hw_vvtd->status,
+           sizeof(struct hvm_hw_vvtd_status));
+    memcpy(domain_vvtd(d)->regs, &hw_vvtd->regs,
+           sizeof(union hvm_hw_vvtd_regs));
+    xfree(hw_vvtd);
+
+    return 0;
+}
+
+static int vvtd_save(struct domain *d, hvm_domain_context_t *h)
+{
+    struct hvm_hw_vvtd *hw_vvtd;
+    int ret;
+
+    if ( !domain_vvtd(d) )
+        return 0;
+
+    hw_vvtd = xmalloc(struct hvm_hw_vvtd);
+    if ( !hw_vvtd )
+        return -ENOMEM;
+
+    memcpy(&hw_vvtd->status, &domain_vvtd(d)->status,
+           sizeof(struct hvm_hw_vvtd_status));
+    memcpy(&hw_vvtd->regs, domain_vvtd(d)->regs,
+           sizeof(union hvm_hw_vvtd_regs));
+    ret = hvm_save_entry(VVTD, 0, h, hw_vvtd);
+    xfree(hw_vvtd);
+
+    return ret;
+}
+
+HVM_REGISTER_SAVE_RESTORE(VVTD, vvtd_save, vvtd_load, 1, HVMSR_PER_DOM);
 
 static void vvtd_reset(struct vvtd *vvtd, uint64_t capability)
 {
