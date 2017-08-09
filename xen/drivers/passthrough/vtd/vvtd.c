@@ -20,6 +20,7 @@
 
 #include <xen/domain_page.h>
 #include <xen/lib.h>
+#include <xen/hvm/save.h>
 #include <xen/sched.h>
 #include <xen/types.h>
 #include <xen/viommu.h>
@@ -32,13 +33,10 @@
 #include <asm/page.h>
 #include <asm/p2m.h>
 #include <asm/system.h>
+#include <public/hvm/save.h>
 
 #include "iommu.h"
 #include "vtd.h"
-
-struct hvm_hw_vvtd_regs {
-    uint8_t data[1024];
-};
 
 /* Status field of struct vvtd */
 #define VIOMMU_STATUS_DEFAULT                   (0)
@@ -46,25 +44,15 @@ struct hvm_hw_vvtd_regs {
 #define VIOMMU_STATUS_DMA_REMAPPING_ENABLED     (1 << 1)
 
 #define vvtd_irq_remapping_enabled(vvtd) \
-    (vvtd->status & VIOMMU_STATUS_IRQ_REMAPPING_ENABLED)
+    (vvtd->hw.status & VIOMMU_STATUS_IRQ_REMAPPING_ENABLED)
 
 struct vvtd {
-    /* VIOMMU_STATUS_XXX */
-    int status;
-    /* Fault Recording index */
-    int frcd_idx;
     /* Address range of remapping hardware register-set */
     uint64_t base_addr;
     uint64_t length;
     /* Point back to the owner domain */
     struct domain *domain;
-    /* Is in Extended Interrupt Mode? */
-    bool eim;
-    /* Max remapping entries in IRT */
-    int irt_max_entry;
-    /* Interrupt remapping table base gfn */
-    uint64_t irt;
-
+    struct hvm_hw_vvtd hw;
     struct hvm_hw_vvtd_regs *regs;
     struct page_info *regs_page;
 };
@@ -370,12 +358,12 @@ static int vvtd_alloc_frcd(struct vvtd *vvtd)
     int prev;
 
     /* Set the F bit to indicate the FRCD is in use. */
-    if ( vvtd_test_and_set_bit(vvtd, DMA_FRCD(vvtd->frcd_idx, DMA_FRCD3_OFFSET),
+    if ( vvtd_test_and_set_bit(vvtd, DMA_FRCD(vvtd->hw.frcd_idx, DMA_FRCD3_OFFSET),
                                DMA_FRCD_F_BIT) )
     {
-        prev = vvtd->frcd_idx;
-        vvtd->frcd_idx = (prev + 1) % DMA_FRCD_REG_NR;
-        return vvtd->frcd_idx;
+        prev = vvtd->hw.frcd_idx;
+        vvtd->hw.frcd_idx = (prev + 1) % DMA_FRCD_REG_NR;
+        return vvtd->hw.frcd_idx;
     }
     return -1;
 }
@@ -712,12 +700,12 @@ static int vvtd_handle_gcmd_ire(struct vvtd *vvtd, uint32_t val)
 
     if ( val & DMA_GCMD_IRE )
     {
-        vvtd->status |= VIOMMU_STATUS_IRQ_REMAPPING_ENABLED;
+        vvtd->hw.status |= VIOMMU_STATUS_IRQ_REMAPPING_ENABLED;
         __vvtd_set_bit(vvtd, DMAR_GSTS_REG, DMA_GSTS_IRES_BIT);
     }
     else
     {
-        vvtd->status |= ~VIOMMU_STATUS_IRQ_REMAPPING_ENABLED;
+        vvtd->hw.status |= ~VIOMMU_STATUS_IRQ_REMAPPING_ENABLED;
         __vvtd_clear_bit(vvtd, DMAR_GSTS_REG, DMA_GSTS_IRES_BIT);
     }
 
@@ -736,11 +724,11 @@ static int vvtd_handle_gcmd_sirtp(struct vvtd *vvtd, uint32_t val)
                    "active." );
 
     vvtd_get_reg_quad(vvtd, DMAR_IRTA_REG, irta);
-    vvtd->irt = DMA_IRTA_ADDR(irta) >> PAGE_SHIFT;
-    vvtd->irt_max_entry = DMA_IRTA_SIZE(irta);
-    vvtd->eim = DMA_IRTA_EIME(irta);
+    vvtd->hw.irt = DMA_IRTA_ADDR(irta) >> PAGE_SHIFT;
+    vvtd->hw.irt_max_entry = DMA_IRTA_SIZE(irta);
+    vvtd->hw.eim = DMA_IRTA_EIME(irta);
     VVTD_DEBUG(VVTD_DBG_RW, "Update IR info (addr=%lx eim=%d size=%d).",
-               vvtd->irt, vvtd->eim, vvtd->irt_max_entry);
+               vvtd->hw.irt, vvtd->hw.eim, vvtd->hw.irt_max_entry);
     __vvtd_set_bit(vvtd, DMAR_GSTS_REG, DMA_GSTS_SIRTPS_BIT);
 
     return X86EMUL_OKAY;
@@ -947,13 +935,13 @@ static int vvtd_get_entry(struct vvtd *vvtd,
 
     VVTD_DEBUG(VVTD_DBG_TRANS, "interpret a request with index %x", entry);
 
-    if ( entry > vvtd->irt_max_entry )
+    if ( entry > vvtd->hw.irt_max_entry )
     {
         ret = VTD_FR_IR_INDEX_OVER;
         goto handle_fault;
     }
 
-    ret = map_guest_page(vvtd->domain, vvtd->irt + (entry >> IREMAP_ENTRY_ORDER),
+    ret = map_guest_page(vvtd->domain, vvtd->hw.irt + (entry >> IREMAP_ENTRY_ORDER),
                          (void**)&irt_page);
     if ( ret )
     {
@@ -1077,6 +1065,49 @@ static int vvtd_get_irq_info(struct domain *d,
     return 0;
 }
 
+static int vvtd_load_regs(struct domain *d, hvm_domain_context_t *h)
+{
+    if ( !domain_vvtd(d) )
+        return -ENODEV;
+
+    if ( hvm_load_entry(IOMMU_REGS, h, domain_vvtd(d)->regs) )
+        return -EINVAL;
+
+    return 0;
+}
+
+static int vvtd_save_regs(struct domain *d, hvm_domain_context_t *h)
+{
+    if ( !domain_vvtd(d) )
+        return 0;
+
+    return hvm_save_entry(IOMMU_REGS, 0, h, domain_vvtd(d)->regs);
+}
+
+static int vvtd_load_hidden(struct domain *d, hvm_domain_context_t *h)
+{
+    if ( !domain_vvtd(d) )
+        return -ENODEV;
+
+    if ( hvm_load_entry(IOMMU, h, &domain_vvtd(d)->hw) )
+        return -EINVAL;
+
+    return 0;
+}
+
+static int vvtd_save_hidden(struct domain *d, hvm_domain_context_t *h)
+{
+    if ( !domain_vvtd(d) )
+        return 0;
+
+    return hvm_save_entry(IOMMU, 0, h, &domain_vvtd(d)->hw);
+}
+
+HVM_REGISTER_SAVE_RESTORE(IOMMU, vvtd_save_hidden, vvtd_load_hidden,
+                          1, HVMSR_PER_DOM);
+HVM_REGISTER_SAVE_RESTORE(IOMMU_REGS, vvtd_save_regs, vvtd_load_regs,
+                          1, HVMSR_PER_DOM);
+
 static void vvtd_reset(struct vvtd *vvtd, uint64_t capability)
 {
     uint64_t cap = DMA_CAP_NFR | DMA_CAP_SLLPS | DMA_CAP_FRO |
@@ -1122,12 +1153,13 @@ static int vvtd_create(struct domain *d, struct viommu *viommu)
     vvtd->base_addr = viommu->base_address;
     vvtd->length = viommu->length;
     vvtd->domain = d;
-    vvtd->status = VIOMMU_STATUS_DEFAULT;
-    vvtd->eim = 0;
-    vvtd->irt = 0;
-    vvtd->irt_max_entry = 0;
-    vvtd->frcd_idx = 0;
+    vvtd->hw.status = VIOMMU_STATUS_DEFAULT;
+    vvtd->hw.eim = 0;
+    vvtd->hw.irt = 0;
+    vvtd->hw.irt_max_entry = 0;
+    vvtd->hw.frcd_idx = 0;
     register_mmio_handler(d, &vvtd_mmio_ops);
+    viommu->priv = (void *)vvtd;
     return 0;
 
  out2:
