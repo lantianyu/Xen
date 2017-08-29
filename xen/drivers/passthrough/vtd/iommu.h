@@ -23,31 +23,39 @@
 #include <asm/msi.h>
 
 /*
- * Intel IOMMU register specification per version 1.0 public spec.
+ * Intel IOMMU register specification per version 2.4 public spec.
  */
 
-#define    DMAR_VER_REG    0x0    /* Arch version supported by this IOMMU */
-#define    DMAR_CAP_REG    0x8    /* Hardware supported capabilities */
-#define    DMAR_ECAP_REG    0x10    /* Extended capabilities supported */
-#define    DMAR_GCMD_REG    0x18    /* Global command register */
-#define    DMAR_GSTS_REG    0x1c    /* Global status register */
-#define    DMAR_RTADDR_REG    0x20    /* Root entry table */
-#define    DMAR_CCMD_REG    0x28    /* Context command reg */
-#define    DMAR_FSTS_REG    0x34    /* Fault Status register */
-#define    DMAR_FECTL_REG    0x38    /* Fault control register */
-#define    DMAR_FEDATA_REG    0x3c    /* Fault event interrupt data register */
-#define    DMAR_FEADDR_REG    0x40    /* Fault event interrupt addr register */
-#define    DMAR_FEUADDR_REG 0x44    /* Upper address register */
-#define    DMAR_AFLOG_REG    0x58    /* Advanced Fault control */
-#define    DMAR_PMEN_REG    0x64    /* Enable Protected Memory Region */
-#define    DMAR_PLMBASE_REG 0x68    /* PMRR Low addr */
-#define    DMAR_PLMLIMIT_REG 0x6c    /* PMRR low limit */
-#define    DMAR_PHMBASE_REG 0x70    /* pmrr high base addr */
-#define    DMAR_PHMLIMIT_REG 0x78    /* pmrr high limit */
-#define    DMAR_IQH_REG    0x80    /* invalidation queue head */
-#define    DMAR_IQT_REG    0x88    /* invalidation queue tail */
-#define    DMAR_IQA_REG    0x90    /* invalidation queue addr */
-#define    DMAR_IRTA_REG   0xB8    /* intr remap */
+#define DMAR_VER_REG            0x0  /* Arch version supported by this IOMMU */
+#define DMAR_CAP_REG            0x8  /* Hardware supported capabilities */
+#define DMAR_ECAP_REG           0x10 /* Extended capabilities supported */
+#define DMAR_GCMD_REG           0x18 /* Global command register */
+#define DMAR_GSTS_REG           0x1c /* Global status register */
+#define DMAR_RTADDR_REG         0x20 /* Root entry table */
+#define DMAR_CCMD_REG           0x28 /* Context command reg */
+#define DMAR_FSTS_REG           0x34 /* Fault Status register */
+#define DMAR_FECTL_REG          0x38 /* Fault control register */
+#define DMAR_FEDATA_REG         0x3c /* Fault event interrupt data register */
+#define DMAR_FEADDR_REG         0x40 /* Fault event interrupt addr register */
+#define DMAR_FEUADDR_REG        0x44 /* Upper address register */
+#define DMAR_AFLOG_REG          0x58 /* Advanced Fault control */
+#define DMAR_PMEN_REG           0x64 /* Enable Protected Memory Region */
+#define DMAR_PLMBASE_REG        0x68 /* PMRR Low addr */
+#define DMAR_PLMLIMIT_REG       0x6c /* PMRR low limit */
+#define DMAR_PHMBASE_REG        0x70 /* pmrr high base addr */
+#define DMAR_PHMLIMIT_REG       0x78 /* pmrr high limit */
+#define DMAR_IQH_REG            0x80 /* invalidation queue head */
+#define DMAR_IQT_REG            0x88 /* invalidation queue tail */
+#define DMAR_IQT_REG_HI         0x8c
+#define DMAR_IQA_REG            0x90 /* invalidation queue addr */
+#define DMAR_IQA_REG_HI         0x94
+#define DMAR_ICS_REG            0x9c /* Invalidation complete status */
+#define DMAR_IECTL_REG          0xa0 /* Invalidation event control */
+#define DMAR_IEDATA_REG         0xa4 /* Invalidation event data */
+#define DMAR_IEADDR_REG         0xa8 /* Invalidation event address */
+#define DMAR_IEUADDR_REG        0xac /* Invalidation event address */
+#define DMAR_IRTA_REG           0xb8 /* Interrupt remapping table addr */
+#define DMAR_IRTA_REG_HI        0xbc
 
 #define OFFSET_STRIDE        (9)
 #define dmar_readl(dmar, reg) readl((dmar) + (reg))
