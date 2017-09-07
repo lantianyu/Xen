@@ -24,6 +24,14 @@
 #define VIOMMU_REQUEST_IRQ_MSI          0
 #define VIOMMU_REQUEST_IRQ_APIC         1
 
+struct arch_irq_remapping_info
+{
+    uint8_t  vector;
+    uint32_t dest;
+    uint32_t dest_mode:1;
+    uint32_t delivery_mode:3;
+};
+
 struct irq_remapping_request
 {
     union {
