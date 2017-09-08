@@ -43,6 +43,8 @@ static inline bool viommu_enabled(void)
 
 int viommu_register_type(uint64_t type, struct viommu_ops *ops);
 int viommu_destroy_domain(struct domain *d);
+int viommu_domctl(struct domain *d, struct xen_domctl_viommu_op *op,
+                  bool_t *need_copy);
 #else
 static inline int viommu_register_type(uint64_t type, struct viommu_ops *ops)
 {
@@ -55,6 +57,12 @@ static inline int viommu_destroy_domain(struct domain *d)
 static inline bool viommu_enabled(void)
 {
     return false;
+}
+static inline int viommu_domctl(struct domain *d,
+                                struct xen_domctl_viommu_op *op,
+                                bool *need_copy)
+{
+    return -ENODEV;
 }
 #endif
 
