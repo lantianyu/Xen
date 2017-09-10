@@ -26,6 +26,8 @@ struct arch_irq_remapping_request;
 
 struct viommu_ops {
     int (*create)(struct domain *d, struct viommu *viommu);
+    bool (*check_irq_remapping)(struct domain *d,
+                                struct arch_irq_remapping_request *request);
     int (*destroy)(struct viommu *viommu);
     int (*handle_irq_request)(struct domain *d,
                               struct arch_irq_remapping_request *request);
@@ -57,6 +59,8 @@ int viommu_handle_irq_request(struct domain *d,
 int viommu_get_irq_info(struct domain *d,
                         struct arch_irq_remapping_request *request,
                         struct arch_irq_remapping_info *irq_info);
+bool viommu_check_irq_remapping(struct domain *d,
+                                struct arch_irq_remapping_request *request);
 #else
 static inline int viommu_register_type(uint64_t type, struct viommu_ops *ops)
 {
@@ -88,6 +92,12 @@ viommu_get_irq_info(struct domain *d, u32 viommu_id,
                     struct arch_irq_remapping_info *irq_info)
 {
     return -EINVAL;
+}
+static inline bool
+viommu_check_irq_remapping(struct domain *d,
+                           struct arch_irq_remapping_request *request)
+{
+    return false;
 }
 #endif
 
