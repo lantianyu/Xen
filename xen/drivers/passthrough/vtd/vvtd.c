@@ -536,6 +536,28 @@ static int vvtd_get_irq_info(struct domain *d,
     return 0;
 }
 
+/* Probe whether the interrupt request is an remapping format */
+static bool vvtd_is_remapping(struct domain *d,
+                              struct arch_irq_remapping_request *irq)
+{
+    if ( irq->type == VIOMMU_REQUEST_IRQ_APIC )
+    {
+        struct IO_APIC_route_remap_entry rte = { .val = irq->msg.rte };
+
+        return rte.format;
+    }
+    else if ( irq->type == VIOMMU_REQUEST_IRQ_MSI )
+    {
+        struct msi_msg_remap_entry msi_msg =
+        { .address_lo = { .val = irq->msg.msi.addr } };
+
+        return msi_msg.address_lo.format;
+    }
+    ASSERT_UNREACHABLE();
+
+    return 0;
+}
+
 static void vvtd_reset(struct vvtd *vvtd, uint64_t capability)
 {
     uint64_t cap = cap_set_num_fault_regs(1ULL) |
@@ -607,7 +629,8 @@ struct viommu_ops vvtd_hvm_vmx_ops = {
     .create = vvtd_create,
     .destroy = vvtd_destroy,
     .handle_irq_request = vvtd_handle_irq_request,
-    .get_irq_info = vvtd_get_irq_info
+    .get_irq_info = vvtd_get_irq_info,
+    .check_irq_remapping = vvtd_is_remapping
 };
 
 static int vvtd_register(void)
