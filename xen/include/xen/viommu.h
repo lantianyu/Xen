@@ -21,10 +21,13 @@
 #define __XEN_VIOMMU_H__
 
 struct viommu;
+struct arch_irq_remapping_request;
 
 struct viommu_ops {
     int (*create)(struct domain *d, struct viommu *viommu);
     int (*destroy)(struct viommu *viommu);
+    int (*handle_irq_request)(struct domain *d,
+                              struct arch_irq_remapping_request *request);
 };
 
 struct viommu {
@@ -45,8 +48,16 @@ int viommu_register_type(uint64_t type, struct viommu_ops *ops);
 int viommu_destroy_domain(struct domain *d);
 int viommu_domctl(struct domain *d, struct xen_domctl_viommu_op *op,
                   bool_t *need_copy);
+int viommu_handle_irq_request(struct domain *d,
+                              struct arch_irq_remapping_request *request);
 #else
 static inline int viommu_register_type(uint64_t type, struct viommu_ops *ops)
+{
+    return -EINVAL;
+}
+static inline int
+viommu_handle_irq_request(struct domain *d,
+                          struct arch_irq_remapping_request *request)
 {
     return -EINVAL;
 }
