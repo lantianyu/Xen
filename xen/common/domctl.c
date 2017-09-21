@@ -1155,6 +1155,12 @@ long do_domctl(XEN_GUEST_HANDLE_PARAM(xen_domctl_t) u_domctl)
                                      op->u.set_gnttab_limits.maptrack_frames);
         break;
 
+#ifdef CONFIG_VIOMMU
+    case XEN_DOMCTL_viommu_op:
+        ret = viommu_domctl(d, &op->u.viommu_op, &copyback);
+        break;
+#endif
+
     default:
         ret = arch_do_domctl(op, d, u_domctl);
         break;

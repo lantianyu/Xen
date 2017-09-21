@@ -133,6 +133,36 @@ static int viommu_create(struct domain *d, uint64_t type,
     return 0;
 }
 
+int viommu_domctl(struct domain *d, struct xen_domctl_viommu_op *op,
+                  bool *need_copy)
+{
+    int rc = -EINVAL;
+
+    if ( !viommu_enabled() )
+        return -ENODEV;
+
+    switch ( op->cmd )
+    {
+    case XEN_DOMCTL_create_viommu:
+        rc = viommu_create(d, op->u.create.viommu_type,
+                           op->u.create.base_address,
+                           op->u.create.capabilities,
+                           &op->u.create.viommu_id);
+        if ( !rc )
+            *need_copy = true;
+        break;
+
+    case XEN_DOMCTL_destroy_viommu:
+        rc = viommu_destroy_domain(d);
+        break;
+
+    default:
+        return -ENOSYS;
+    }
+
+    return rc;
+}
+
 /*
  * Local variables:
  * mode: C

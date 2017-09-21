@@ -1101,6 +1101,46 @@ struct xen_domctl_vuart_op {
                                  */
 };
 
+/*  vIOMMU helper
+ *
+ *  vIOMMU interface can be used to create/destroy vIOMMU and
+ *  query vIOMMU capabilities.
+ */
+
+/* vIOMMU type - specify vendor vIOMMU device model */
+#define VIOMMU_TYPE_INTEL_VTD           0
+
+/* vIOMMU capabilities */
+#define VIOMMU_CAP_IRQ_REMAPPING  (1u << 0)
+
+struct xen_domctl_viommu_op {
+    uint32_t cmd;
+#define XEN_DOMCTL_create_viommu          0
+#define XEN_DOMCTL_destroy_viommu         1
+    union {
+        struct {
+            /* IN - vIOMMU type */
+            uint64_t viommu_type;
+            /* 
+             * IN - MMIO base address of vIOMMU. vIOMMU device models
+             * are in charge of to check base_address.
+             */
+            uint64_t base_address;
+            /* IN - Capabilities with which we want to create */
+            uint64_t capabilities;
+            /* OUT - vIOMMU identity */
+            uint32_t viommu_id;
+        } create;
+
+        struct {
+            /* IN - vIOMMU identity */
+            uint32_t viommu_id;
+        } destroy;
+    } u;
+};
+typedef struct xen_domctl_viommu_op xen_domctl_viommu_op;
+DEFINE_XEN_GUEST_HANDLE(xen_domctl_viommu_op);
+
 struct xen_domctl {
     uint32_t cmd;
 #define XEN_DOMCTL_createdomain                   1
@@ -1180,6 +1220,7 @@ struct xen_domctl {
 #define XEN_DOMCTL_soft_reset                    79
 #define XEN_DOMCTL_set_gnttab_limits             80
 #define XEN_DOMCTL_vuart_op                      81
+#define XEN_DOMCTL_viommu_op                     82
 #define XEN_DOMCTL_gdbsx_guestmemio            1000
 #define XEN_DOMCTL_gdbsx_pausevcpu             1001
 #define XEN_DOMCTL_gdbsx_unpausevcpu           1002
@@ -1244,6 +1285,7 @@ struct xen_domctl {
         struct xen_domctl_psr_cat_op        psr_cat_op;
         struct xen_domctl_set_gnttab_limits set_gnttab_limits;
         struct xen_domctl_vuart_op          vuart_op;
+        struct xen_domctl_viommu_op         viommu_op;
         uint8_t                             pad[128];
     } u;
 };
