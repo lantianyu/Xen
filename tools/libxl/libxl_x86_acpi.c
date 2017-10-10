@@ -265,7 +265,6 @@ static int libxl__dom_load_acpi_hvm(libxl__gc *gc,
     uint32_t len;
 
     if ((b_info->type != LIBXL_DOMAIN_TYPE_HVM) ||
-        (b_info->device_model_version == LIBXL_DEVICE_MODEL_VERSION_NONE) ||
         (b_info->num_viommus != 1) ||
         (b_info->viommu[0].type != LIBXL_VIOMMU_TYPE_INTEL_VTD))
         return 0;
@@ -319,13 +318,12 @@ int libxl__dom_load_acpi(libxl__gc *gc,
                          struct xc_dom_image *dom)
 {
 
-    if (b_info->type != LIBXL_DOMAIN_TYPE_HVM)
-        return 0;
-
-    if (b_info->device_model_version == LIBXL_DEVICE_MODEL_VERSION_NONE)
+    if (b_info->type == LIBXL_DOMAIN_TYPE_PVH)
         return libxl__dom_load_acpi_pvh(gc, b_info, dom);
-    else
+    else if (b_info->type == LIBXL_DOMAIN_TYPE_HVM)
         return libxl__dom_load_acpi_hvm(gc, b_info, dom);
+
+    return -EINVAL;
 }
 /*
  * Local variables:
