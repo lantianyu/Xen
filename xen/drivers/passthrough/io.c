@@ -278,7 +278,7 @@ static struct vcpu *vector_hashing_dest(const struct domain *d,
 }
 
 static void set_hvm_gmsi_info(struct hvm_gmsi_info *msi,
-                              xen_domctl_bind_pt_irq_t *pt_irq_bind)
+                              const struct xen_domctl_bind_pt_irq *pt_irq_bind)
 {
     switch (pt_irq_bind->irq_type)
     {
@@ -318,8 +318,9 @@ static void clear_hvm_gmsi_info(struct hvm_gmsi_info *msi, int irq_type)
     }
 }
 
-static bool hvm_gmsi_info_need_update(struct hvm_gmsi_info *msi,
-                                      xen_domctl_bind_pt_irq_t *pt_irq_bind)
+static bool
+hvm_gmsi_info_need_update(struct hvm_gmsi_info *msi,
+                          const struct xen_domctl_bind_pt_irq *pt_irq_bind)
 {
     switch (pt_irq_bind->irq_type)
     {

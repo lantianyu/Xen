@@ -1739,7 +1739,7 @@ int xc_domain_update_msi_irq_remapping(
     uint64_t gtable)
 {
     int rc;
-    xen_domctl_bind_pt_irq_t *bind;
+    struct xen_domctl_bind_pt_irq *bind;
 
     DECLARE_DOMCTL;
 
@@ -1793,7 +1793,7 @@ int xc_domain_unbind_msi_irq_remapping(
     uint64_t addr)
 {
     int rc;
-    xen_domctl_bind_pt_irq_t *bind;
+    struct xen_domctl_bind_pt_irq *bind;
 
     DECLARE_DOMCTL;
 
